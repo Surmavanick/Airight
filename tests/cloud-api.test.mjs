@@ -185,7 +185,8 @@ test("TXT document delegates to the annotated text endpoint", async () => {
   }), { env, fetchImpl });
   assert.equal(response.status, 200);
   assert.match(captured.url, /\/v2\/text\/sync\?include_annotations=true&external_id=aright-/);
-  assert.match(String(captured.init.body), /^text=/);
+  assert.ok(captured.init.body instanceof FormData);
+  assert.equal(captured.init.body.get("text"), text.trim());
 });
 
 test("too-few-word text is rejected before a provider call", async () => {
