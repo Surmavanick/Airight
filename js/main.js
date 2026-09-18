@@ -5,45 +5,84 @@
 // Until it is set, the form explains that the inbox is not connected yet.
 const CONTACT_EMAIL = "";
 
-const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+let reduceMotion = motionQuery.matches;
+motionQuery.addEventListener?.("change", (event) => {
+  reduceMotion = event.matches;
+});
 
 /* ---------- Loader ---------- */
 document.body.classList.add("is-loading");
 const loader = document.getElementById("loader");
 const loaderStart = performance.now();
+let loaderFinishQueued = false;
 
 function finishLoader() {
-  const minVisible = reduceMotion ? 0 : 900;
+  if (loaderFinishQueued) return;
+  loaderFinishQueued = true;
+  const minVisible = reduceMotion ? 0 : 180;
   const wait = Math.max(0, minVisible - (performance.now() - loaderStart));
   setTimeout(() => {
     loader.classList.add("is-done");
     document.body.classList.remove("is-loading");
+    document.dispatchEvent(new CustomEvent("loader:done"));
   }, wait);
 }
 
-if (document.readyState === "complete") finishLoader();
-else window.addEventListener("load", finishLoader, { once: true });
-// Safety net if a slow image keeps `load` from firing.
-setTimeout(finishLoader, 4000);
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", finishLoader, { once: true });
+} else {
+  finishLoader();
+}
+// Independent safety net: remote fonts and below-fold media never trap the UI.
+setTimeout(finishLoader, 1500);
 
 /* ---------- Reveal on scroll ---------- */
 const revealEls = document.querySelectorAll(".reveal");
+const revealClasses = ["reveal", "reveal--left", "reveal--right", "reveal--scale", "in"];
 
-if (reduceMotion || !("IntersectionObserver" in window)) {
-  revealEls.forEach((el) => el.classList.add("in"));
-} else {
+function finishReveal(el) {
+  el.classList.add("has-revealed");
+  el.classList.remove(...revealClasses);
+}
+
+function revealElement(el) {
+  if (reduceMotion) {
+    finishReveal(el);
+    return;
+  }
+
+  el.classList.add("in");
+  const delay = Number.parseFloat(getComputedStyle(el).getPropertyValue("--d")) || 0;
+  setTimeout(() => finishReveal(el), 850 + delay * 1000);
+}
+
+function startReveals() {
+  if (reduceMotion || !("IntersectionObserver" in window)) {
+    revealEls.forEach(revealElement);
+    return;
+  }
+
   const io = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        entry.target.classList.add("in");
+        revealElement(entry.target);
         io.unobserve(entry.target);
       }
     },
-    { threshold: 0.15, rootMargin: "0px 0px -8% 0px" }
+    { threshold: 0.12, rootMargin: "0px 0px -7% 0px" }
   );
-  revealEls.forEach((el) => io.observe(el));
+  revealEls.forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    const alreadyVisible = rect.top < window.innerHeight && rect.bottom > 0;
+    if (alreadyVisible) revealElement(el);
+    else io.observe(el);
+  });
 }
+
+if (loader.classList.contains("is-done")) startReveals();
+else document.addEventListener("loader:done", startReveals, { once: true });
 
 /* ---------- Counters ---------- */
 function animateCount(el) {
@@ -64,50 +103,63 @@ function animateCount(el) {
 }
 
 const counters = document.querySelectorAll("[data-count]");
-if ("IntersectionObserver" in window) {
-  const cio = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        animateCount(entry.target);
-        cio.unobserve(entry.target);
-      }
-    },
-    { threshold: 0.6 }
-  );
-  counters.forEach((el) => cio.observe(el));
-} else {
-  counters.forEach(animateCount);
+function startCounters() {
+  if ("IntersectionObserver" in window) {
+    const cio = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          animateCount(entry.target);
+          cio.unobserve(entry.target);
+        }
+      },
+      { threshold: 0.6 }
+    );
+    counters.forEach((el) => cio.observe(el));
+  } else {
+    counters.forEach(animateCount);
+  }
 }
 
 /* ---------- Donut chart ---------- */
-document.querySelectorAll(".donut__fill").forEach((circle) => {
-  const pct = Number(circle.dataset.pct || 0);
-  const circumference = 2 * Math.PI * Number(circle.getAttribute("r"));
-  circle.style.strokeDasharray = String(circumference);
-  const setOffset = () => {
-    circle.style.strokeDashoffset = String(circumference * (1 - pct / 100));
-  };
-  if (reduceMotion || !("IntersectionObserver" in window)) {
-    setOffset();
-    return;
-  }
-  const dio = new IntersectionObserver(
-    (entries) => {
-      if (entries.some((e) => e.isIntersecting)) {
-        setOffset();
-        dio.disconnect();
-      }
-    },
-    { threshold: 0.5 }
-  );
-  dio.observe(circle);
-});
+function startDonuts() {
+  document.querySelectorAll(".donut__fill").forEach((circle) => {
+    const pct = Number(circle.dataset.pct || 0);
+    const circumference = 2 * Math.PI * Number(circle.getAttribute("r"));
+    circle.style.strokeDasharray = String(circumference);
+    const setOffset = () => {
+      circle.style.strokeDashoffset = String(circumference * (1 - pct / 100));
+    };
+    if (reduceMotion || !("IntersectionObserver" in window)) {
+      setOffset();
+      return;
+    }
+    const dio = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setOffset();
+          dio.disconnect();
+        }
+      },
+      { threshold: 0.5 }
+    );
+    dio.observe(circle);
+  });
+}
+
+if (loader.classList.contains("is-done")) {
+  startCounters();
+  startDonuts();
+} else {
+  document.addEventListener("loader:done", startCounters, { once: true });
+  document.addEventListener("loader:done", startDonuts, { once: true });
+}
 
 /* ---------- Nav ---------- */
 const nav = document.getElementById("nav");
 const navToggle = document.getElementById("navToggle");
 const navLinks = [...document.querySelectorAll(".nav__link")];
+const mobileNavQuery = window.matchMedia("(max-width: 959px)");
 
 function setMenuOpen(open) {
   nav.classList.toggle("is-open", open);
@@ -117,6 +169,10 @@ function setMenuOpen(open) {
 
 navToggle.addEventListener("click", () => {
   setMenuOpen(!nav.classList.contains("is-open"));
+});
+
+mobileNavQuery.addEventListener?.("change", (event) => {
+  if (!event.matches) setMenuOpen(false);
 });
 
 document.querySelectorAll("#navMenu a").forEach((a) => {
@@ -147,16 +203,22 @@ const spyTargets = navLinks
   .filter((t) => t && t.el);
 
 function updateNav() {
-  nav.classList.toggle("is-scrolled", window.scrollY > 40);
+  const scrollY = window.scrollY;
+  nav.classList.toggle("is-scrolled", scrollY > 40);
 
-  const marker = window.scrollY + window.innerHeight * 0.35;
+  const marker = scrollY + window.innerHeight * 0.35;
   let current = spyTargets[0];
   for (const t of spyTargets) {
     if (t.el.offsetTop <= marker) current = t;
   }
   const contact = document.getElementById("contact");
   if (contact && contact.offsetTop <= marker) current = null;
-  spyTargets.forEach((t) => t.link.classList.toggle("is-active", t === current));
+  spyTargets.forEach((t) => {
+    const active = t === current;
+    t.link.classList.toggle("is-active", active);
+    if (active) t.link.setAttribute("aria-current", "page");
+    else t.link.removeAttribute("aria-current");
+  });
 }
 
 /* ---------- Scroll updates ---------- */
@@ -201,12 +263,17 @@ function activateTab(tab, moveFocus = false) {
   const next = tabTitles[tab.dataset.tab];
   if (next && appTitle) {
     clearTimeout(titleTimer);
-    appTitle.style.opacity = "0";
+    if (reduceMotion) {
+      appTitle.textContent = next;
+      appTitle.classList.remove("is-changing");
+      return;
+    }
+
+    appTitle.classList.add("is-changing");
     titleTimer = setTimeout(() => {
       appTitle.textContent = next;
-      appTitle.style.transition = "opacity .35s ease";
-      appTitle.style.opacity = "1";
-    }, reduceMotion ? 0 : 120);
+      requestAnimationFrame(() => appTitle.classList.remove("is-changing"));
+    }, 180);
   }
 }
 
@@ -255,3 +322,7 @@ form.addEventListener("submit", (e) => {
 /* ---------- Footer year ---------- */
 const year = document.getElementById("year");
 if (year) year.textContent = String(new Date().getFullYear());
+
+clearTimeout(window.__arightBootWatch);
+document.documentElement.classList.remove("no-js", "boot-failed");
+document.documentElement.classList.add("js", "js-ready");

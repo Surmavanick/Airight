@@ -9,14 +9,14 @@
     <path id="t" d="M85.86-106.312v20.75H57.702V0H31.797v-85.562H3.641v-20.75Z"/>
   </defs>
   <g transform="translate(0 108.3)">
-    <g fill="#141f34">
+    <g fill="#171915">
       <use href="#r" x="111.879"/>
       <use href="#i" x="210.614"/>
       <use href="#g" x="255.287"/>
       <use href="#h" x="370.679"/>
       <use href="#t" x="481.377"/>
     </g>
-    <g fill="#076492">
+    <g fill="#0b5874">
       <use href="#a" x="0.227"/>
       <use href="#i" x="111.834"/>
     </g>

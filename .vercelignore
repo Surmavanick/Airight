@@ -1,0 +1,22 @@
+.env
+.env.*.local
+.git
+.agents
+.codex
+.aright-venv
+.venv
+.qa-edge-profile
+__pycache__
+tmp
+tests
+node_modules
+
+# Local persistent-model runtime. Vercel uses api/ and lib/cloud-api.mjs.
+server.js
+ml_worker.py
+requirements-ml.txt
+setup-models.ps1
+start-aright.cmd
+start-aright.ps1
+verify_environment.py
+Airight.pdf

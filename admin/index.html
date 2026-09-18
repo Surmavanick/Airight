@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Aright Console | AI Analysis &amp; IPR Scoring</title>
+  <meta name="description" content="Analyze AI-generated text, images, video and audio, score their IP readiness, and get a concrete action plan." />
+  <meta name="robots" content="noindex" />
+  <meta name="theme-color" content="#171915" />
+  <link rel="icon" href="../assets/img/brand-mark.svg" type="image/svg+xml" />
+  <link rel="icon" href="../assets/img/favicon-32.png" sizes="32x32" />
+  <link rel="stylesheet" href="../css/styles.css" />
+  <link rel="stylesheet" href="../css/admin.css" />
+</head>
+<body class="console is-checking-access">
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-gauge" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 12l4.2-4.2"/><path d="M12 5v1.6M5 12h1.6M17.4 12H19M7.05 7.05l1.13 1.13M16.95 7.05l-1.13 1.13"/><circle cx="12" cy="12" r="1.2"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 2.8V11c0 4.8-3.1 8.4-7 10-3.9-1.6-7-5.2-7-10V5.8z"/><path d="M9 12l2 2 4-4"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 11h18"/></symbol>
+      <symbol id="i-facet" viewBox="0 0 24 24"><path d="M7 3h10l4.5 6L12 21 2.5 9z"/><path d="M2.5 9h19M9 3l3 6 3-6M12 9v12"/></symbol>
+      <symbol id="i-node" viewBox="0 0 24 24"><rect x="3" y="4" width="6.5" height="5" rx="1.5"/><rect x="14.5" y="15" width="6.5" height="5" rx="1.5"/><path d="M9.5 6.5H13a3 3 0 0 1 3 3V15"/><circle cx="12.5" cy="12" r="1.6"/><path d="M3 15v-2.5h5.5"/></symbol>
+      <symbol id="i-text" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 15.5h6M9 8.5h2.5"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="M21 16l-5.5-5.5L5 20"/></symbol>
+      <symbol id="i-video" viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/></symbol>
+      <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 9.5v4.5M12 17.2v.3"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="shell">
+    <aside class="side">
+      <a class="side__brand" href="../index.html" aria-label="Aright website">
+        <img class="brand-logo" src="../assets/img/brand-logo-light.svg" alt="Aright" width="112" height="22" />
+        <span>Console</span>
+      </a>
+
+      <nav class="side__nav" aria-label="Console">
+        <button class="side__link is-active" type="button" data-view="analyze" aria-current="page">
+          <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg><span class="side__long">Analyze asset</span><span class="side__short">Analyze</span>
+        </button>
+        <button class="side__link" type="button" data-view="assets">
+          <svg class="icon" aria-hidden="true"><use href="#i-facet"/></svg><span class="side__long">IP asset register</span><span class="side__short">Register</span>
+          <b class="side__count" id="assetCount">0</b>
+        </button>
+        <button class="side__link" type="button" data-view="evidence">
+          <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg><span class="side__long">Evidence vault</span><span class="side__short">Evidence</span>
+        </button>
+      </nav>
+
+      <div class="side__foot">
+        <p class="conn" id="conn" data-state="checking" role="status">
+          <i aria-hidden="true"></i><span id="connText">Connecting to real detectors…</span>
+        </p>
+        <a class="side__back" href="../THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">Model notices</a>
+        <a class="side__back" href="../index.html">
+          <svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>Back to website
+        </a>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+
+      <!-- ===== ANALYZE ===== -->
+      <section class="view is-active" id="view-analyze" aria-labelledby="analyzeTitle">
+        <header class="view__head">
+          <p class="eyebrow">AI analysis &amp; IPR scoring</p>
+          <h1 class="view__title" id="analyzeTitle">Screen an asset for AI signals</h1>
+          <p class="view__lead">
+            Upload text, an image, a video or audio. The hosted console uses AI or Not through a protected server-side
+            proxy; the local launcher can also use pinned open models. Aright keeps each detector signal separate and
+            turns it with your evidence answers into an IPR-readiness score and a concrete action plan.
+          </p>
+        </header>
+
+        <ol class="flow" id="flow" aria-label="Progress">
+          <li data-step="upload"><b>1</b><span>Upload</span></li>
+          <li data-step="score"><b>2</b><span>AI analysis &amp; IPR score</span></li>
+          <li data-step="plan"><b>3</b><span>Action plan</span></li>
+          <li data-step="protect"><b>4</b><span>Review &amp; protection</span></li>
+        </ol>
+
+        <div class="workspace">
+          <form class="box intake" id="intake" novalidate>
+            <div class="types" role="tablist" aria-label="Asset type">
+              <button class="types__btn is-active" type="button" role="tab" id="type-text" aria-selected="true" aria-controls="pane-text" data-type="text">
+                <svg class="icon" aria-hidden="true"><use href="#i-text"/></svg>Text
+              </button>
+              <button class="types__btn" type="button" role="tab" id="type-image" aria-selected="false" aria-controls="pane-image" data-type="image" tabindex="-1">
+                <svg class="icon" aria-hidden="true"><use href="#i-image"/></svg>Image
+              </button>
+              <button class="types__btn" type="button" role="tab" id="type-video" aria-selected="false" aria-controls="pane-video" data-type="video" tabindex="-1">
+                <svg class="icon" aria-hidden="true"><use href="#i-video"/></svg>Video
+              </button>
+              <button class="types__btn" type="button" role="tab" id="type-audio" aria-selected="false" aria-controls="pane-audio" data-type="audio" tabindex="-1">
+                <svg class="icon" aria-hidden="true"><use href="#i-audio"/></svg>Audio
+              </button>
+            </div>
+
+            <!-- Text -->
+            <div class="pane" id="pane-text" role="tabpanel" aria-labelledby="type-text" data-pane="text">
+              <label class="field" for="textInput">
+                <span class="field__label">Paste text</span>
+                <textarea id="textInput" rows="8" placeholder="Marketing copy, an article, a script, product descriptions…"></textarea>
+              </label>
+              <p class="field__meta" id="charCount">0 characters</p>
+              <p class="divider"><span>or upload a document</span></p>
+              <div class="upload" data-slot="doc">
+                <label class="drop">
+                  <input class="drop__input" type="file" accept=".pdf,.docx,.txt" data-input="doc" />
+                  <svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>
+                  <strong>Drop a document or <u>browse</u></strong>
+                  <span>TXT on the hosted console · PDF/DOCX/TXT in the local app</span>
+                </label>
+                <div class="chosen" hidden></div>
+              </div>
+            </div>
+
+            <!-- Image -->
+            <div class="pane" id="pane-image" role="tabpanel" aria-labelledby="type-image" data-pane="image" hidden>
+              <div class="upload" data-slot="image">
+                <label class="drop drop--tall">
+                  <input class="drop__input" type="file" accept="image/jpeg,image/png,image/webp" data-input="image" />
+                  <svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>
+                  <strong>Drop an image or <u>browse</u></strong>
+                  <span>JPG, PNG or WEBP · hosted limit 4 MB</span>
+                </label>
+                <div class="chosen" hidden></div>
+              </div>
+              <p class="note note--block">In hosted mode, image bytes are sent to AI or Not through Aright's server-side proxy; the vendor states uploads are deleted after inference and its privacy policy applies. Local-only mode keeps the image on this computer, while hybrid local mode shows both named signals.</p>
+            </div>
+
+            <!-- Video -->
+            <div class="pane" id="pane-video" role="tabpanel" aria-labelledby="type-video" data-pane="video" hidden>
+              <div class="upload" data-slot="video">
+                <label class="drop drop--tall">
+                  <input class="drop__input" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v" data-input="video" />
+                  <svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>
+                  <strong>Drop a video or <u>browse</u></strong>
+                  <span>MP4, WEBM or MOV · only sampled frames are scored</span>
+                </label>
+                <div class="chosen" hidden></div>
+              </div>
+              <label class="field" for="frameCount">
+                <span class="field__label">Frames to scan</span>
+                <select id="frameCount">
+                  <option value="3">3 frames</option>
+                  <option value="5" selected>5 frames</option>
+                  <option value="8">8 frames</option>
+                </select>
+              </label>
+              <p class="note note--block">Aright extracts evenly spaced frames in your browser and sends only those frames to the connected image detector; the full video is not uploaded. This is frame-level screening, not full temporal deepfake analysis.</p>
+            </div>
+
+            <!-- Audio -->
+            <div class="pane" id="pane-audio" role="tabpanel" aria-labelledby="type-audio" data-pane="audio" hidden>
+              <div class="upload" data-slot="audio">
+                <label class="drop">
+                  <input class="drop__input" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac" data-input="audio" />
+                  <svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>
+                  <strong>Drop an audio file or <u>browse</u></strong>
+                  <span>MP3, WAV, M4A, OGG or FLAC · up to 50 MB · maximum 60 seconds</span>
+                </label>
+                <div class="chosen" hidden></div>
+              </div>
+              <label class="field" for="transcriptInput">
+                <span class="field__label">Lyrics or voice-over script</span>
+                <textarea id="transcriptInput" rows="5" placeholder="Optional: paste the words for a separate text-model check"></textarea>
+              </label>
+              <p class="note">The hosted console sends a 16 kHz voice sample to AI or Not; the local app uses Spectra-AASIST3. Both screen synthetic or cloned speech, not AI music. A supplied script is checked separately.</p>
+            </div>
+
+            <fieldset class="details">
+              <legend>Asset details <small>used for the IPR score</small></legend>
+              <label class="field" for="assetName">
+                <span class="field__label">Asset name</span>
+                <input id="assetName" type="text" placeholder="e.g. Pricing page copy" autocomplete="off" />
+              </label>
+              <label class="field" for="aiTool">
+                <span class="field__label">AI tool used</span>
+                <input id="aiTool" type="text" placeholder="e.g. ChatGPT, Midjourney, Suno" list="toolList" autocomplete="off" />
+                <datalist id="toolList">
+                  <option value="ChatGPT"></option><option value="Claude"></option><option value="Gemini"></option>
+                  <option value="Midjourney"></option><option value="DALL·E"></option><option value="Stable Diffusion"></option>
+                  <option value="Runway"></option><option value="Sora"></option><option value="Suno"></option>
+                  <option value="Udio"></option><option value="ElevenLabs"></option>
+                </datalist>
+              </label>
+              <label class="field" for="humanInput">
+                <span class="field__label">Human contribution</span>
+                <select id="humanInput">
+                  <option value="none">None: raw AI output</option>
+                  <option value="light" selected>Light: prompts and small edits</option>
+                  <option value="substantial">Substantial: reworked, arranged, combined</option>
+                  <option value="human">Human-made: AI only assisted</option>
+                </select>
+              </label>
+              <div class="details__row">
+                <label class="field" for="useInput">
+                  <span class="field__label">Intended use</span>
+                  <select id="useInput">
+                    <option value="internal">Internal only</option>
+                    <option value="commercial" selected>Commercial</option>
+                    <option value="brand">Brand or logo</option>
+                  </select>
+                </label>
+                <label class="field" for="licenseInput">
+                  <span class="field__label">Tool terms allow it?</span>
+                  <select id="licenseInput">
+                    <option value="yes">Yes, checked</option>
+                    <option value="unsure" selected>Not sure</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+              </div>
+              <label class="check" for="provenanceInput">
+                <input id="provenanceInput" type="checkbox" />
+                <span>Prompts, model version and source files are saved</span>
+              </label>
+            </fieldset>
+
+            <div class="intake__foot">
+              <button class="btn btn--maroon" type="submit" id="runBtn">
+                Run model analysis <span class="btn__arrow" aria-hidden="true"></span>
+              </button>
+              <p class="note" id="costHint">Connecting to the available text detector…</p>
+            </div>
+            <p class="form-error" id="intakeError" role="alert"></p>
+          </form>
+
+          <div class="results" id="results">
+            <div class="box empty" id="emptyState">
+              <svg class="icon icon--lg" aria-hidden="true"><use href="#i-gauge"/></svg>
+              <h2>Your report appears here</h2>
+              <ol class="empty__steps">
+                <li><strong>Model screening &amp; IPR readiness.</strong> A real detector scores the asset; your evidence declarations determine how ready it is for review.</li>
+                <li><strong>Action plan.</strong> The specific sentences, frames or rights you need to fix, in priority order.</li>
+                <li><strong>Review &amp; evidence.</strong> Tick off the tasks. The SHA-256 fingerprint and versioned model record go into the evidence vault.</li>
+              </ol>
+            </div>
+
+            <div class="box loading" id="loadingState" hidden>
+              <span class="spinner" aria-hidden="true"></span>
+              <p id="loadingText" role="status">Loading the detection model…</p>
+            </div>
+
+            <div class="box problem" id="errorState" hidden role="alert">
+              <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+              <div>
+                <h2>Analysis didn't finish</h2>
+                <p id="errorText"></p>
+                <details class="raw" id="errorRawWrap" hidden>
+                  <summary>Analysis details</summary>
+                  <pre id="errorRaw"></pre>
+                </details>
+              </div>
+            </div>
+
+            <div class="report" id="report" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== REGISTER ===== -->
+      <section class="view" id="view-assets" aria-labelledby="assetsTitle" hidden>
+        <header class="view__head">
+          <p class="eyebrow">IP PLM</p>
+          <h1 class="view__title" id="assetsTitle">IP asset register</h1>
+          <p class="view__lead">Every analyzed asset with its IPR score, protection status and next action.</p>
+        </header>
+        <ul class="kpis" id="kpis"></ul>
+        <div class="box register">
+          <div class="register__scroll">
+            <table class="register__table">
+              <thead>
+                <tr><th scope="col">Asset</th><th scope="col">Type</th><th scope="col">AI signal</th><th scope="col">IPR readiness</th><th scope="col">Status</th><th scope="col">Next action</th><th scope="col">Analyzed</th><th scope="col"><span class="sr-only">Actions</span></th></tr>
+              </thead>
+              <tbody id="registerBody"></tbody>
+            </table>
+          </div>
+          <p class="register__empty" id="registerEmpty">No assets yet. Run your first analysis to start the register.</p>
+        </div>
+      </section>
+
+      <!-- ===== EVIDENCE ===== -->
+      <section class="view" id="view-evidence" aria-labelledby="evidenceTitle" hidden>
+        <header class="view__head view__head--split">
+          <div>
+            <p class="eyebrow">IP evidence management</p>
+            <h1 class="view__title" id="evidenceTitle">Evidence vault</h1>
+            <p class="view__lead">Fingerprints, asset details and the versioned model record for every check. Download a record for review or a dispute file.</p>
+          </div>
+          <button class="btn btn--outline" type="button" id="exportAll">
+            <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Export all
+          </button>
+        </header>
+        <p class="note note--block">Records are stored in this browser. Download them to keep a permanent copy.</p>
+        <ul class="vault" id="vault"></ul>
+        <p class="register__empty" id="vaultEmpty">The vault is empty. Evidence is recorded automatically with each analysis.</p>
+      </section>
+
+    </main>
+  </div>
+
+  <dialog class="unlock" id="unlock" aria-labelledby="unlockTitle">
+    <form id="unlockForm">
+      <svg class="icon icon--lg" aria-hidden="true"><use href="#i-lock"/></svg>
+      <h2 id="unlockTitle">Console access key</h2>
+      <p>This console is access-gated. Enter the key set as <code>ADMIN_PASSWORD</code> on the server. Browser storage itself is not encrypted.</p>
+      <label class="field" for="unlockInput">
+        <span class="field__label">Access key</span>
+        <input id="unlockInput" type="password" autocomplete="current-password" required />
+      </label>
+      <p class="form-error" id="unlockError" role="alert"></p>
+      <button class="btn btn--maroon" type="submit">Unlock <span class="btn__arrow" aria-hidden="true"></span></button>
+    </form>
+  </dialog>
+
+  <script src="../js/admin.js" defer></script>
+</body>
+</html>

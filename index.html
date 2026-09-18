@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Aright | AI-Generated Asset IP Management</title>
   <meta name="description" content="Aright scores, protects, and documents the intellectual property inside every AI-generated asset your teams ship. Built for AI-driven companies and legal teams." />
-  <meta name="theme-color" content="#f3f4f6" />
+  <meta name="theme-color" content="#171915" />
   <link rel="icon" href="assets/img/brand-mark.svg" type="image/svg+xml" />
   <link rel="icon" href="assets/img/favicon-32.png" sizes="32x32" />
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png" />
@@ -13,10 +13,14 @@
   <meta property="og:description" content="Score, protect, and document the IP inside every AI-generated asset." />
   <meta property="og:type" content="website" />
   <meta property="og:image" content="assets/img/hero.jpg" />
-  <script>document.documentElement.classList.replace("no-js", "js");</script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script>
+    document.documentElement.classList.replace("no-js", "js");
+    window.__arightBootWatch = setTimeout(function () {
+      document.documentElement.classList.remove("js");
+      document.documentElement.classList.add("no-js", "boot-failed");
+      if (document.body) document.body.classList.remove("is-loading");
+    }, 2500);
+  </script>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
@@ -45,9 +49,9 @@
 
   <nav class="nav" id="nav" aria-label="Primary">
     <a class="nav__brand" href="#top" aria-label="Aright home">
-      <img class="brand-logo" src="assets/img/brand-logo.svg" alt="Aright" width="154" height="30" />
+      <img class="brand-logo" src="assets/img/brand-logo-light.svg" alt="Aright" width="154" height="30" />
     </a>
-    <button class="nav__toggle" id="navToggle" aria-expanded="false" aria-controls="navMenu" aria-label="Open menu">
+    <button class="nav__toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="navMenu" aria-label="Open menu">
       <span></span><span></span>
     </button>
     <div class="nav__menu" id="navMenu">
@@ -56,10 +60,11 @@
       <a class="nav__link" href="#how">How it works</a>
       <a class="nav__link" href="#pricing">Pricing</a>
       <a class="nav__link" href="#team">Team</a>
-      <a class="btn btn--maroon btn--sm" href="#contact">
+      <a class="btn btn--maroon btn--sm" href="admin/index.html">
         Get in Touch <span class="btn__arrow" aria-hidden="true"></span>
       </a>
     </div>
+    <a class="nav__mobile-cta" href="admin/index.html">Get in Touch <span aria-hidden="true">↗</span></a>
   </nav>
 
   <!-- ===== HERO ===== -->
@@ -69,29 +74,29 @@
     </div>
     <div class="hero__frame">
       <div class="hero__content">
-        <span class="pill reveal"><i class="pill__dot"></i>AI-Generated Asset IP Management</span>
-        <h1 class="display reveal" style="--d:.08s">A Smarter Way to Protect<br />What AI Creates</h1>
-        <p class="hero__lead reveal" style="--d:.16s">
+        <span class="pill reveal reveal--left"><i class="pill__dot"></i>AI-Generated Asset IP Management</span>
+        <h1 class="display reveal reveal--left" style="--d:.05s">A Smarter Way to Protect What AI Creates</h1>
+        <p class="hero__lead reveal reveal--left" style="--d:.10s">
           Aright scores, protects, and documents the intellectual property inside every
           AI-generated asset your teams ship. Faster, cheaper, and defensible.
         </p>
-        <a class="btn btn--light reveal" style="--d:.24s" href="#contact">
+        <a class="btn btn--light reveal reveal--left" style="--d:.15s" href="#contact">
           Get Started <span class="btn__arrow" aria-hidden="true"></span>
         </a>
       </div>
 
       <ul class="hero__features">
-        <li class="reveal" style="--d:.30s">
+        <li class="reveal" style="--d:.12s">
           <svg class="icon icon--lg" aria-hidden="true"><use href="#i-gauge"/></svg>
-          <div><h3>AI-driven IPR scoring</h3><p>Every asset is analyzed and given a risk score before it ships.</p></div>
+          <div><h3>IPR scoring</h3><p>Every asset is analyzed and given a risk score before it ships.</p></div>
         </li>
-        <li class="reveal" style="--d:.38s">
+        <li class="reveal" style="--d:.18s">
           <svg class="icon icon--lg" aria-hidden="true"><use href="#i-shield"/></svg>
-          <div><h3>Automated protection</h3><p>Action plans and legal workflows run without a manual queue.</p></div>
+          <div><h3>Auto protection</h3><p>Action plans and legal workflows run without a manual queue.</p></div>
         </li>
-        <li class="reveal" style="--d:.46s">
+        <li class="reveal" style="--d:.24s">
           <svg class="icon icon--lg" aria-hidden="true"><use href="#i-folder"/></svg>
-          <div><h3>Evidence you can defend</h3><p>A secure, searchable record ready for any review or dispute.</p></div>
+          <div><h3>Defensible evidence</h3><p>A secure, searchable record ready for any review or dispute.</p></div>
         </li>
       </ul>
     </div>
@@ -103,17 +108,17 @@
     <section class="section intro">
       <div class="container intro__grid">
         <div class="intro__text">
-          <div class="avatars reveal">
-            <img src="assets/img/founder-ketevan.jpg" alt="" />
-            <img src="assets/img/founder-levani.jpg" alt="" />
+          <div class="avatars reveal reveal--left">
+            <img src="assets/img/founder-ketevan.jpg" alt="" loading="lazy" decoding="async" />
+            <img src="assets/img/founder-levani.jpg" alt="" loading="lazy" decoding="async" />
             <span class="avatars__mark"><img src="assets/img/brand-mark.svg" alt="" /></span>
             <p>Built by legal operators<br />and AI product engineers</p>
           </div>
-          <h2 class="h2 reveal" style="--d:.08s">
+          <h2 class="h2 reveal reveal--left" style="--d:.08s">
             We combine <em>legal expertise and AI</em> to make protecting AI-generated work simpler, faster, and far less expensive.
           </h2>
         </div>
-        <div class="intro__aside reveal" style="--d:.16s">
+        <div class="intro__aside reveal reveal--right" style="--d:.16s">
           <p>
             Aright is a B2B agentic operating system for businesses and legal teams. It analyzes
             AI-generated code, text, visuals, audio, and game assets, plans the right IP actions,
@@ -124,22 +129,22 @@
       </div>
 
       <div class="container intro__media">
-        <figure class="media-card reveal">
-          <img src="assets/img/trust.jpg" alt="Legal professional reviewing documents" width="1200" height="900" />
+        <figure class="media-card reveal reveal--left">
+          <img src="assets/img/trust.jpg" alt="Legal professional reviewing documents" width="1200" height="900" loading="lazy" decoding="async" />
           <figcaption class="media-card__badge"><svg class="icon" aria-hidden="true"><use href="#i-seal"/></svg></figcaption>
         </figure>
         <ul class="stats">
-          <li class="stat reveal" style="--d:.08s">
+          <li class="stat reveal reveal--right" style="--d:.08s">
             <div class="stat__num"><span data-count="90">0</span>%</div>
             <p>Faster IP analysis and planning workflow</p>
             <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg>
           </li>
-          <li class="stat reveal" style="--d:.16s">
+          <li class="stat reveal reveal--right" style="--d:.16s">
             <div class="stat__num"><span data-count="60">0</span>%</div>
             <p>Lower cost of IP evidence management</p>
             <svg class="icon" aria-hidden="true"><use href="#i-seal"/></svg>
           </li>
-          <li class="stat reveal" style="--d:.24s">
+          <li class="stat reveal reveal--right" style="--d:.24s">
             <div class="stat__num"><span data-count="100">0</span>+</div>
             <p>Hours a month reclaimed from manual IP work</p>
             <svg class="icon" aria-hidden="true"><use href="#i-loop"/></svg>
@@ -157,7 +162,7 @@
         </header>
 
         <div class="cards3">
-          <article class="card reveal">
+          <article class="card reveal reveal--scale">
             <span class="card__num">01</span>
             <h3>Save valuable time</h3>
             <p class="card__sub">Get more done in less time.</p>
@@ -170,7 +175,7 @@
             <a class="card__link" href="#how"><svg class="icon" aria-hidden="true"><use href="#i-loop"/></svg>Let agents run the routine analysis and get your hours back.</a>
           </article>
 
-          <article class="card reveal" style="--d:.1s">
+          <article class="card reveal reveal--scale" style="--d:.1s">
             <span class="card__num">02</span>
             <h3>Get clear risk insights</h3>
             <p class="card__sub">Turn ambiguity into a score.</p>
@@ -184,7 +189,7 @@
             <a class="card__link" href="#how"><svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg>See exactly where each asset stands before it ships.</a>
           </article>
 
-          <article class="card reveal" style="--d:.2s">
+          <article class="card reveal reveal--scale" style="--d:.2s">
             <span class="card__num">03</span>
             <h3>Work more efficiently</h3>
             <p class="card__sub">One plan, one workflow, one record.</p>
@@ -248,13 +253,13 @@
     <!-- ===== BENTO ===== -->
     <section class="section bento-section">
       <div class="container bento">
-        <div class="bento__intro reveal">
+        <div class="bento__intro reveal reveal--left">
           <h2 class="h2">Everything You Need<br />for Protected AI Work</h2>
           <p>From risk scoring to legal automation, Aright covers the full lifecycle of an AI-generated asset.</p>
           <a class="btn btn--dark" href="#pricing">Browse Plans <span class="btn__arrow" aria-hidden="true"></span></a>
         </div>
 
-        <article class="tile tile--maroon reveal" style="--d:.08s">
+        <article class="tile tile--maroon reveal reveal--scale" style="--d:.08s">
           <span class="tile__num">01</span>
           <svg class="icon icon--light" aria-hidden="true"><use href="#i-gauge"/></svg>
           <h3>IPR Scoring & IP PLM</h3>
@@ -262,7 +267,7 @@
           <a href="#how">Learn More <span aria-hidden="true">→</span></a>
         </article>
 
-        <article class="tile tile--olive reveal" style="--d:.16s">
+        <article class="tile tile--olive reveal reveal--scale" style="--d:.16s">
           <span class="tile__num">02</span>
           <svg class="icon icon--light" aria-hidden="true"><use href="#i-folder"/></svg>
           <h3>IP Evidence Management</h3>
@@ -270,7 +275,7 @@
           <a href="#how">Learn More <span aria-hidden="true">→</span></a>
         </article>
 
-        <article class="tile tile--dark reveal" style="--d:.24s">
+        <article class="tile tile--dark reveal reveal--scale" style="--d:.24s">
           <span class="tile__num">03</span>
           <svg class="icon icon--light" aria-hidden="true"><use href="#i-seal"/></svg>
           <h3>Legal DLM Automation</h3>
@@ -278,8 +283,8 @@
           <a href="#how">Learn More <span aria-hidden="true">→</span></a>
         </article>
 
-        <article class="tile tile--photo reveal" style="--d:.32s">
-          <img src="assets/img/agents.jpg" alt="" width="900" height="600" />
+        <article class="tile tile--photo reveal reveal--scale" style="--d:.32s">
+          <img src="assets/img/agents.jpg" alt="" width="900" height="600" loading="lazy" decoding="async" />
           <div class="tile__over">
             <h3>AI Workflow Agents</h3>
             <p>Agents execute the action plan and hand your team only what truly needs a human.</p>
@@ -297,19 +302,19 @@
         </header>
 
         <div class="steps" id="steps">
-          <article class="step reveal">
+          <article class="step reveal reveal--scale">
             <span class="step__num">01</span>
             <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg>
             <h3>AI analysis & IPR scoring</h3>
             <p>Aright analyzes each asset, identifies IP risks and protection opportunities, and generates an IPR score.</p>
           </article>
-          <article class="step reveal" style="--d:.1s">
+          <article class="step reveal reveal--scale" style="--d:.1s">
             <span class="step__num">02</span>
             <svg class="icon" aria-hidden="true"><use href="#i-node"/></svg>
             <h3>Action plan & execution</h3>
             <p>An action plan runs applicable workflows automatically and assigns the tasks that still need a person.</p>
           </article>
-          <article class="step reveal" style="--d:.2s">
+          <article class="step reveal reveal--scale" style="--d:.2s">
             <span class="step__num">03</span>
             <svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>
             <h3>Review & protection</h3>
@@ -322,14 +327,14 @@
     <!-- ===== WHY NOW ===== -->
     <section class="section whynow">
       <div class="container whynow__grid">
-        <div class="reveal">
+        <div class="reveal reveal--left">
           <h2 class="h2">The market is moving<br /><em>faster than the law.</em></h2>
           <p>Enterprise AI adoption is outpacing IP governance. AI-generated assets are shipping at scale, and the tooling to protect them barely exists.</p>
         </div>
         <ul class="figures">
-          <li class="reveal" style="--d:.08s"><strong>$12.5B</strong><span>Global market size</span></li>
-          <li class="reveal" style="--d:.16s"><strong>13.6%</strong><span>Compound annual growth</span></li>
-          <li class="reveal" style="--d:.24s"><strong>88%</strong><span>Enterprise AI adoption, 79% on GenAI</span></li>
+          <li class="reveal reveal--right" style="--d:.08s"><strong>$12.5B</strong><span>Global market size</span></li>
+          <li class="reveal reveal--right" style="--d:.16s"><strong>13.6%</strong><span>Compound annual growth</span></li>
+          <li class="reveal reveal--right" style="--d:.24s"><strong>88%</strong><span>Enterprise AI adoption, 79% on GenAI</span></li>
         </ul>
       </div>
     </section>
@@ -342,7 +347,7 @@
           <p>Annual packages for teams at every stage of AI adoption.</p>
         </header>
         <div class="plans">
-          <article class="plan reveal">
+          <article class="plan reveal reveal--scale">
             <h3>Growth</h3>
             <div class="plan__price"><strong>$6K</strong><span>/ year</span></div>
             <p>Smaller AI teams starting their IP management practice.</p>
@@ -353,7 +358,7 @@
             </ul>
             <a class="btn btn--outline" href="#contact">Start Growth <span class="btn__arrow" aria-hidden="true"></span></a>
           </article>
-          <article class="plan reveal" style="--d:.1s">
+          <article class="plan reveal reveal--scale" style="--d:.1s">
             <h3>Business</h3>
             <div class="plan__price"><strong>$10K</strong><span>/ year</span></div>
             <p>Growing companies with multiple repositories, teams, and higher AI activity.</p>
@@ -364,7 +369,7 @@
             </ul>
             <a class="btn btn--outline" href="#contact">Start Business <span class="btn__arrow" aria-hidden="true"></span></a>
           </article>
-          <article class="plan plan--featured reveal" style="--d:.2s">
+          <article class="plan plan--featured reveal reveal--scale" style="--d:.2s">
             <h3>Enterprise</h3>
             <div class="plan__price"><strong>$20K</strong><span>/ year</span></div>
             <p>Large organizations that need custom workflows, advanced security, and dedicated support.</p>
@@ -387,23 +392,23 @@
           <p>Legal operations and AI product engineering, on the same team from day one.</p>
         </header>
         <div class="people">
-          <article class="person reveal">
-            <img src="assets/img/founder-ketevan.jpg" alt="Ketevan Beridze" width="800" height="1000" />
+          <article class="person reveal reveal--left">
+            <img src="assets/img/founder-ketevan.jpg" alt="Ketevan Beridze" width="800" height="1000" loading="lazy" decoding="async" />
             <div class="person__meta">
               <h3>Ketevan Beridze</h3>
               <span>CEO & CSO</span>
               <p>8+ years in legal operations and IP management.</p>
             </div>
           </article>
-          <article class="person reveal" style="--d:.1s">
-            <img src="assets/img/founder-levani.jpg" alt="Levani Jalaghonia" width="800" height="1000" />
+          <article class="person reveal reveal--scale" style="--d:.1s">
+            <img src="assets/img/founder-levani.jpg" alt="Levani Jalaghonia" width="800" height="1000" loading="lazy" decoding="async" />
             <div class="person__meta">
               <h3>Levani Jalaghonia</h3>
               <span>CTO</span>
               <p>5+ years in digital product development and AI automation.</p>
             </div>
           </article>
-          <blockquote class="person__quote reveal" style="--d:.2s">
+          <blockquote class="person__quote reveal reveal--right" style="--d:.2s">
             <p>“AI creates in minutes. Protecting it used to take months. Aright closes that gap for every team shipping AI-generated work.”</p>
             <footer>Ketevan Beridze, Founder</footer>
           </blockquote>
