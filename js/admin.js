@@ -122,6 +122,7 @@ const state = {
   usedUrls: new Set(),
   previews: new Map(),
   expandedQuotes: new Set(),
+  reportTabs: new Map(),
   server: { online: false, ready: false, deployment: "", provider: "", providers: {}, capabilities: {}, worker: null, authRequired: false, authorized: false },
   assets: [],
   assetsLoaded: false,
@@ -1541,7 +1542,7 @@ function summaryCard(record, score, status, animate) {
   ].join("");
 
   return `
-    <article class="box section-card">
+    <article class="box section-card report-summary">
       <div class="section-card__head">
         <div>
           <p class="eyebrow">${TYPE_LABEL[record.type]} · ${escapeHtml(record.id)}</p>
@@ -1560,7 +1561,10 @@ function summaryCard(record, score, status, animate) {
           <div class="meter__text"><span>IPR readiness score</span><strong>${riskHeadline(score.total)}</strong><p>How ready the asset's evidence is for human or legal review, out of 100.</p></div>
         </div>
       </div>
-      <ul class="factors">${factors}</ul>
+      <details class="score-breakdown">
+        <summary><span>Readiness breakdown</span><small>4 evidence factors</small></summary>
+        <ul class="factors">${factors}</ul>
+      </details>
       ${notices}
     </article>`;
 }
@@ -1834,16 +1838,76 @@ function rawCard(record) {
     </details>`;
 }
 
+const REPORT_TAB_ORDER = ["findings", "plan", "review"];
+
+function preferredReportTab(record) {
+  return openTasks(record).length ? "plan" : "review";
+}
+
+function activeReportTab(record) {
+  const saved = state.reportTabs.get(record.id);
+  return REPORT_TAB_ORDER.includes(saved) ? saved : preferredReportTab(record);
+}
+
+function reportWorkspace(record, status) {
+  const active = activeReportTab(record);
+  const open = openTasks(record).length;
+  const ai = record.detection.aiPct;
+  const tabs = [
+    { id: "findings", label: "Findings", meta: ai == null ? "Not scanned" : `${Math.round(ai)}% signal` },
+    { id: "plan", label: "Action plan", meta: open ? `${open} open` : "Complete" },
+    { id: "review", label: "Review", meta: STATUS[status].label },
+  ];
+  const tabList = tabs.map((tab) => {
+    const selected = tab.id === active;
+    return `<button class="report-tab${selected ? " is-active" : ""}" type="button" role="tab" id="report-tab-${tab.id}" aria-controls="report-panel-${tab.id}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}" data-report-tab="${tab.id}"><span>${tab.label}</span><small>${tab.meta}</small></button>`;
+  }).join("");
+  const panel = (id, content) => `<section class="report-tabpanel" id="report-panel-${id}" role="tabpanel" aria-labelledby="report-tab-${id}" tabindex="0" data-report-panel="${id}"${id === active ? "" : " hidden"}>${content}</section>`;
+  return `
+    <section class="report-workspace" aria-label="Analysis report details">
+      <div class="report-tabs" role="tablist" aria-label="Report sections">${tabList}</div>
+      <div class="report-tabpanels">
+        ${panel("findings", detectionCard(record))}
+        ${panel("plan", planCard(record))}
+        ${panel("review", `${protectionCard(record, status)}${rawCard(record)}`)}
+      </div>
+    </section>`;
+}
+
+function activateReportTab(tab, { focus = false } = {}) {
+  const record = currentRecord();
+  if (!record || !REPORT_TAB_ORDER.includes(tab)) return;
+  const button = $(`[data-report-tab="${tab}"]`, els.report);
+  if (!button) return;
+  state.reportTabs.set(record.id, tab);
+  $$('[data-report-tab]', els.report).forEach((item) => {
+    const selected = item.dataset.reportTab === tab;
+    item.classList.toggle("is-active", selected);
+    item.setAttribute("aria-selected", String(selected));
+    item.tabIndex = selected ? 0 : -1;
+  });
+  $$('[data-report-panel]', els.report).forEach((item) => {
+    item.hidden = item.dataset.reportPanel !== tab;
+  });
+  if (focus) button.focus({ preventScroll: true });
+}
+
 function renderReport(record, { animate = false } = {}) {
   const score = scoreOf(record);
   const status = statusOf(record);
+  if (!state.reportTabs.has(record.id)) state.reportTabs.set(record.id, preferredReportTab(record));
+  const selectedTab = activeReportTab(record);
+  const isSameRecord = els.report.dataset.recordId === record.id;
+  const previousScroll = isSameRecord
+    ? $(`[data-report-panel="${selectedTab}"]`, els.report)?.scrollTop || 0
+    : 0;
   els.report.innerHTML = [
     summaryCard(record, score, status, animate),
-    detectionCard(record),
-    planCard(record),
-    protectionCard(record, status),
-    rawCard(record),
+    reportWorkspace(record, status),
   ].join("");
+  els.report.dataset.recordId = record.id;
+  const restoredPanel = $(`[data-report-panel="${selectedTab}"]`, els.report);
+  if (restoredPanel) restoredPanel.scrollTop = previousScroll;
   updateFlow(stageFor(record));
 
   if (animate) {
@@ -2074,6 +2138,7 @@ function deleteAsset(id) {
   if (!record) return;
   if (!window.confirm(`Delete “${record.name}” and its evidence record from this browser? Download the evidence first if you need it.`)) return;
   state.assets = state.assets.filter((asset) => asset.id !== id);
+  state.reportTabs.delete(id);
   saveAssets();
   if (state.currentId === id) {
     state.currentId = null;
@@ -2395,6 +2460,7 @@ els.report.addEventListener("change", (event) => {
   if (!task) return;
   task.done = input.checked;
   if (!task.done) record.protectedAt = null;
+  state.reportTabs.set(record.id, "plan");
   saveAssets();
   renderReport(record);
   renderCollections();
@@ -2402,6 +2468,11 @@ els.report.addEventListener("change", (event) => {
 });
 
 els.report.addEventListener("click", (event) => {
+  const reportTab = event.target.closest("[data-report-tab]");
+  if (reportTab) {
+    activateReportTab(reportTab.dataset.reportTab, { focus: true });
+    return;
+  }
   const record = currentRecord();
   if (!record) return;
 
@@ -2423,6 +2494,19 @@ els.report.addEventListener("click", (event) => {
   }
   if (action === "download") downloadEvidence(record.id);
   if (action === "rescan") prefillFrom(record);
+});
+
+els.report.addEventListener("keydown", (event) => {
+  const tab = event.target.closest("[data-report-tab]");
+  if (!tab || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const current = REPORT_TAB_ORDER.indexOf(tab.dataset.reportTab);
+  const next = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? REPORT_TAB_ORDER.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + REPORT_TAB_ORDER.length) % REPORT_TAB_ORDER.length;
+  activateReportTab(REPORT_TAB_ORDER[next], { focus: true });
 });
 
 function onCollectionClick(event) {
