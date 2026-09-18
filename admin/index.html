@@ -32,33 +32,45 @@
       <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
       <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 9.5v4.5M12 17.2v.3"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 10.5L12 3l8.5 7.5"/><path d="M5.5 9.5V21h13V9.5M9.5 21v-7h5v7"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
     </defs>
   </svg>
 
   <div class="shell">
     <aside class="side">
-      <a class="side__brand" href="../index.html" aria-label="Aright website">
-        <img class="brand-logo" src="../assets/img/brand-logo-light.svg" alt="Aright" width="112" height="22" />
-        <span>Console</span>
-      </a>
+      <div class="side__top">
+        <a class="side__brand" href="../index.html" aria-label="Aright website">
+          <img class="brand-logo" src="../assets/img/brand-logo-light.svg" alt="Aright" width="112" height="22" />
+          <img class="brand-mark" src="../assets/img/brand-mark.svg" alt="" width="24" height="24" aria-hidden="true" />
+          <span>Console</span>
+        </a>
+        <div class="side__workspace" aria-label="Current workspace">
+          <span class="side__workspace-mark" aria-hidden="true">A</span>
+          <span class="side__workspace-copy"><strong>Aright</strong><small>IP operations</small></span>
+        </div>
+      </div>
 
       <nav class="side__nav" aria-label="Console">
-        <button class="side__link is-active" type="button" data-view="analyze" aria-current="page">
-          <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg><span class="side__long">Analyze asset</span><span class="side__short">Analyze</span>
+        <span class="side__label">Workspace</span>
+        <button class="side__link is-active" type="button" data-view="overview" aria-current="page" aria-label="Overview">
+          <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span class="side__long">Overview</span><span class="side__short">Home</span>
         </button>
-        <button class="side__link" type="button" data-view="assets">
-          <svg class="icon" aria-hidden="true"><use href="#i-facet"/></svg><span class="side__long">IP asset register</span><span class="side__short">Register</span>
+        <button class="side__link" type="button" data-view="analyze" aria-label="New analysis">
+          <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg><span class="side__long">New analysis</span><span class="side__short">Analyze</span>
+        </button>
+        <button class="side__link" type="button" data-view="assets" aria-label="Asset register">
+          <svg class="icon" aria-hidden="true"><use href="#i-facet"/></svg><span class="side__long">Asset register</span><span class="side__short">Register</span>
           <b class="side__count" id="assetCount">0</b>
         </button>
-        <button class="side__link" type="button" data-view="evidence">
+        <button class="side__link" type="button" data-view="evidence" aria-label="Evidence vault">
           <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg><span class="side__long">Evidence vault</span><span class="side__short">Evidence</span>
         </button>
       </nav>
 
       <div class="side__foot">
-        <p class="conn" id="conn" data-state="checking" role="status">
-          <i aria-hidden="true"></i><span id="connText">Connecting to real detectors…</span>
-        </p>
         <a class="side__back" href="../THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">Model notices</a>
         <a class="side__back" href="../index.html">
           <svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>Back to website
@@ -66,25 +78,92 @@
       </div>
     </aside>
 
-    <main class="main" id="main">
+    <div class="app-frame">
+      <header class="topbar">
+        <div class="topbar__context">
+          <span class="topbar__product">Aright Console</span>
+          <span class="topbar__separator" aria-hidden="true">/</span>
+          <span class="topbar__workspace">IP operations</span>
+        </div>
+        <div class="topbar__tools">
+          <button class="command-trigger" type="button" id="commandTrigger" aria-label="Search or jump to a console page or asset" aria-haspopup="dialog" aria-controls="commandMenu">
+            <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><span>Search or jump to…</span><kbd>Ctrl K</kbd>
+          </button>
+          <p class="conn" id="conn" data-state="checking" role="status">
+            <i aria-hidden="true"></i><span id="connText">Connecting to detectors…</span>
+          </p>
+          <button class="topbar__new" type="button" id="newAnalysisBtn" aria-label="Start a new analysis">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>New analysis</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="main" id="main">
+
+      <!-- ===== OVERVIEW ===== -->
+      <section class="view is-active" id="view-overview" aria-labelledby="overviewTitle">
+        <header class="view__head view__head--overview">
+          <div>
+            <p class="eyebrow">Workspace overview</p>
+            <h1 class="view__title" id="overviewTitle">IP operations at a glance</h1>
+            <p class="view__lead">Review risk, evidence readiness and the work that needs your attention.</p>
+          </div>
+          <button class="btn btn--maroon" type="button" id="overviewNewAnalysis">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>New analysis
+          </button>
+        </header>
+
+        <ul class="overview-metrics" id="overviewMetrics" aria-label="Workspace metrics"></ul>
+
+        <div class="overview-grid">
+          <section class="overview-panel overview-panel--attention" aria-labelledby="attentionTitle">
+            <header class="panel-head">
+              <div><p class="panel-kicker">Priority queue</p><h2 id="attentionTitle">Needs attention</h2></div>
+              <button class="text-action" type="button" data-overview-view="assets">View register</button>
+            </header>
+            <div class="overview-list" id="attentionList"></div>
+          </section>
+
+          <section class="overview-panel" aria-labelledby="recentTitle">
+            <header class="panel-head">
+              <div><p class="panel-kicker">Latest changes</p><h2 id="recentTitle">Recent analyses</h2></div>
+              <button class="text-action" type="button" data-overview-view="assets">View all</button>
+            </header>
+            <div class="overview-list" id="recentList"></div>
+          </section>
+        </div>
+
+        <section class="overview-status" aria-label="System and evidence status">
+          <div class="overview-status__item">
+            <span class="status-mark status-mark--service" aria-hidden="true"></span>
+            <span><strong>Detector service</strong><small id="overviewDetectorStatus">Checking connected models…</small></span>
+          </div>
+          <div class="overview-status__item">
+            <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
+            <span><strong>Evidence storage</strong><small>Browser-local · export records for durable retention</small></span>
+          </div>
+          <div class="overview-status__item">
+            <svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>
+            <span><strong>Review standard</strong><small>Detector signals stay separate from IPR readiness</small></span>
+          </div>
+        </section>
+      </section>
 
       <!-- ===== ANALYZE ===== -->
-      <section class="view is-active" id="view-analyze" aria-labelledby="analyzeTitle">
-        <header class="view__head">
-          <p class="eyebrow">AI analysis &amp; IPR scoring</p>
-          <h1 class="view__title" id="analyzeTitle">Screen an asset for AI signals</h1>
-          <p class="view__lead">
-            Upload text, an image, a video or audio. The hosted console uses AI or Not through a protected server-side
-            proxy; the local launcher can also use pinned open models. Aright keeps each detector signal separate and
-            turns it with your evidence answers into an IPR-readiness score and a concrete action plan.
-          </p>
+      <section class="view" id="view-analyze" aria-labelledby="analyzeTitle" hidden>
+        <header class="view__head view__head--compact">
+          <div>
+            <p class="eyebrow">AI analysis &amp; IPR scoring</p>
+            <h1 class="view__title" id="analyzeTitle">Screen a new asset</h1>
+          </div>
+          <p class="view__lead">Run a detector, assess evidence readiness and create a prioritized review plan.</p>
         </header>
 
         <ol class="flow" id="flow" aria-label="Progress">
-          <li data-step="upload"><b>1</b><span>Upload</span></li>
-          <li data-step="score"><b>2</b><span>AI analysis &amp; IPR score</span></li>
-          <li data-step="plan"><b>3</b><span>Action plan</span></li>
-          <li data-step="protect"><b>4</b><span>Review &amp; protection</span></li>
+          <li data-step="upload" aria-label="Step 1: Upload"><b>1</b><span>Upload</span></li>
+          <li data-step="score" aria-label="Step 2: AI analysis and IPR score"><b>2</b><span>AI analysis &amp; IPR score</span></li>
+          <li data-step="plan" aria-label="Step 3: Action plan"><b>3</b><span>Action plan</span></li>
+          <li data-step="protect" aria-label="Step 4: Review and protection"><b>4</b><span>Review &amp; protection</span></li>
         </ol>
 
         <div class="workspace">
@@ -108,7 +187,7 @@
             <div class="pane" id="pane-text" role="tabpanel" aria-labelledby="type-text" data-pane="text">
               <label class="field" for="textInput">
                 <span class="field__label">Paste text</span>
-                <textarea id="textInput" rows="8" placeholder="Marketing copy, an article, a script, product descriptions…"></textarea>
+                <textarea id="textInput" rows="6" placeholder="Marketing copy, an article, a script, product descriptions…"></textarea>
               </label>
               <p class="field__meta" id="charCount">0 characters</p>
               <p class="divider"><span>or upload a document</span></p>
@@ -177,54 +256,60 @@
               <p class="note" id="audioAvailabilityNote">The hosted console sends a 16 kHz voice sample to AI or Not when voice access is enabled; the local app uses Spectra-AASIST3. Both screen synthetic or cloned speech, not AI music. A supplied script is checked separately.</p>
             </div>
 
-            <fieldset class="details">
-              <legend>Asset details <small>used for the IPR score</small></legend>
-              <label class="field" for="assetName">
-                <span class="field__label">Asset name</span>
-                <input id="assetName" type="text" placeholder="e.g. Pricing page copy" autocomplete="off" />
-              </label>
-              <label class="field" for="aiTool">
-                <span class="field__label">AI tool used</span>
-                <input id="aiTool" type="text" placeholder="e.g. ChatGPT, Midjourney, Suno" list="toolList" autocomplete="off" />
-                <datalist id="toolList">
-                  <option value="ChatGPT"></option><option value="Claude"></option><option value="Gemini"></option>
-                  <option value="Midjourney"></option><option value="DALL·E"></option><option value="Stable Diffusion"></option>
-                  <option value="Runway"></option><option value="Sora"></option><option value="Suno"></option>
-                  <option value="Udio"></option><option value="ElevenLabs"></option>
-                </datalist>
-              </label>
-              <label class="field" for="humanInput">
-                <span class="field__label">Human contribution</span>
-                <select id="humanInput">
-                  <option value="none">None: raw AI output</option>
-                  <option value="light" selected>Light: prompts and small edits</option>
-                  <option value="substantial">Substantial: reworked, arranged, combined</option>
-                  <option value="human">Human-made: AI only assisted</option>
-                </select>
-              </label>
-              <div class="details__row">
-                <label class="field" for="useInput">
-                  <span class="field__label">Intended use</span>
-                  <select id="useInput">
-                    <option value="internal">Internal only</option>
-                    <option value="commercial" selected>Commercial</option>
-                    <option value="brand">Brand or logo</option>
-                  </select>
-                </label>
-                <label class="field" for="licenseInput">
-                  <span class="field__label">Tool terms allow it?</span>
-                  <select id="licenseInput">
-                    <option value="yes">Yes, checked</option>
-                    <option value="unsure" selected>Not sure</option>
-                    <option value="no">No</option>
-                  </select>
-                </label>
-              </div>
-              <label class="check" for="provenanceInput">
-                <input id="provenanceInput" type="checkbox" />
-                <span>Prompts, model version and source files are saved</span>
-              </label>
-            </fieldset>
+            <details class="details-disclosure">
+              <summary>
+                <span><strong>Evidence details</strong><small>Used for the IPR-readiness score</small></span>
+                <span class="details-disclosure__state" id="detailsSummary">Light contribution · Commercial · Licence unchecked</span>
+              </summary>
+              <fieldset class="details">
+                <legend class="sr-only">Asset and evidence details</legend>
+                <div class="details__grid">
+                  <label class="field" for="assetName">
+                    <span class="field__label">Asset name</span>
+                    <input id="assetName" type="text" placeholder="e.g. Pricing page copy" autocomplete="off" />
+                  </label>
+                  <label class="field" for="aiTool">
+                    <span class="field__label">AI tool used</span>
+                    <input id="aiTool" type="text" placeholder="e.g. ChatGPT, Midjourney, Suno" list="toolList" autocomplete="off" />
+                    <datalist id="toolList">
+                      <option value="ChatGPT"></option><option value="Claude"></option><option value="Gemini"></option>
+                      <option value="Midjourney"></option><option value="DALL·E"></option><option value="Stable Diffusion"></option>
+                      <option value="Runway"></option><option value="Sora"></option><option value="Suno"></option>
+                      <option value="Udio"></option><option value="ElevenLabs"></option>
+                    </datalist>
+                  </label>
+                  <label class="field details__span" for="humanInput">
+                    <span class="field__label">Human contribution</span>
+                    <select id="humanInput">
+                      <option value="none">None: raw AI output</option>
+                      <option value="light" selected>Light: prompts and small edits</option>
+                      <option value="substantial">Substantial: reworked, arranged, combined</option>
+                      <option value="human">Human-made: AI only assisted</option>
+                    </select>
+                  </label>
+                  <label class="field" for="useInput">
+                    <span class="field__label">Intended use</span>
+                    <select id="useInput">
+                      <option value="internal">Internal only</option>
+                      <option value="commercial" selected>Commercial</option>
+                      <option value="brand">Brand or logo</option>
+                    </select>
+                  </label>
+                  <label class="field" for="licenseInput">
+                    <span class="field__label">Tool terms allow it?</span>
+                    <select id="licenseInput">
+                      <option value="yes">Yes, checked</option>
+                      <option value="unsure" selected>Not sure</option>
+                      <option value="no">No</option>
+                    </select>
+                  </label>
+                  <label class="check details__span" for="provenanceInput">
+                    <input id="provenanceInput" type="checkbox" />
+                    <span>Prompts, model version and source files are saved</span>
+                  </label>
+                </div>
+              </fieldset>
+            </details>
 
             <div class="intake__foot">
               <button class="btn btn--maroon" type="submit" id="runBtn">
@@ -237,13 +322,21 @@
 
           <div class="results" id="results">
             <div class="box empty" id="emptyState">
-              <svg class="icon icon--lg" aria-hidden="true"><use href="#i-gauge"/></svg>
-              <h2>Your report appears here</h2>
-              <ol class="empty__steps">
-                <li><strong>Model screening &amp; IPR readiness.</strong> A real detector scores the asset; your evidence declarations determine how ready it is for review.</li>
-                <li><strong>Action plan.</strong> The specific sentences, frames or rights you need to fix, in priority order.</li>
-                <li><strong>Review &amp; evidence.</strong> Tick off the tasks. The SHA-256 fingerprint and versioned model record go into the evidence vault.</li>
-              </ol>
+              <div class="empty__head">
+                <span class="empty__icon"><svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg></span>
+                <div><p class="panel-kicker">Analysis output</p><h2>Ready for an asset</h2><p>Your detector signal, IPR readiness and prioritized actions will appear here.</p></div>
+              </div>
+              <div class="empty__preview" aria-hidden="true">
+                <span><i></i><strong>AI signal</strong><small>Model screening</small></span>
+                <span><i></i><strong>IPR readiness</strong><small>Evidence quality</small></span>
+                <span><i></i><strong>Action plan</strong><small>Next best steps</small></span>
+              </div>
+              <div class="empty__shortcuts">
+                <span>Start with</span>
+                <button type="button" data-empty-type="text">Text</button>
+                <button type="button" data-empty-type="image">Image</button>
+                <button type="button" data-empty-type="video">Video</button>
+              </div>
             </div>
 
             <div class="box loading" id="loadingState" hidden>
@@ -270,13 +363,32 @@
 
       <!-- ===== REGISTER ===== -->
       <section class="view" id="view-assets" aria-labelledby="assetsTitle" hidden>
-        <header class="view__head">
-          <p class="eyebrow">IP PLM</p>
-          <h1 class="view__title" id="assetsTitle">IP asset register</h1>
-          <p class="view__lead">Every analyzed asset with its IPR score, protection status and next action.</p>
+        <header class="view__head view__head--split">
+          <div>
+            <p class="eyebrow">IP asset management</p>
+            <h1 class="view__title" id="assetsTitle">Asset register</h1>
+            <p class="view__lead">Every analyzed asset, its evidence readiness and the next action.</p>
+          </div>
+          <button class="btn btn--maroon" type="button" data-view-target="analyze"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>New analysis</button>
         </header>
         <ul class="kpis" id="kpis"></ul>
         <div class="box register">
+          <div class="register__tools">
+            <label class="register__search" for="registerSearch">
+              <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+              <input id="registerSearch" type="search" placeholder="Search assets or record IDs" autocomplete="off" />
+            </label>
+            <label class="register__filter" for="registerStatusFilter">
+              <span class="sr-only">Filter by status</span>
+              <select id="registerStatusFilter">
+                <option value="all">All statuses</option>
+                <option value="at-risk">At risk</option>
+                <option value="action">Action needed</option>
+                <option value="review">In review</option>
+                <option value="protected">Review complete</option>
+              </select>
+            </label>
+          </div>
           <div class="register__scroll">
             <table class="register__table">
               <thead>
@@ -293,21 +405,37 @@
       <section class="view" id="view-evidence" aria-labelledby="evidenceTitle" hidden>
         <header class="view__head view__head--split">
           <div>
-            <p class="eyebrow">IP evidence management</p>
+            <p class="eyebrow">Evidence management</p>
             <h1 class="view__title" id="evidenceTitle">Evidence vault</h1>
-            <p class="view__lead">Fingerprints, asset details and the versioned model record for every check. Download a record for review or a dispute file.</p>
+            <p class="view__lead">Fingerprints, model provenance and review records in one exportable index.</p>
           </div>
           <button class="btn btn--outline" type="button" id="exportAll">
             <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Export all
           </button>
         </header>
-        <p class="note note--block">Records are stored in this browser. Download them to keep a permanent copy.</p>
+        <p class="note note--block vault-notice"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Records are stored in this browser. Download them to keep a durable copy.</p>
         <ul class="vault" id="vault"></ul>
         <p class="register__empty" id="vaultEmpty">The vault is empty. Evidence is recorded automatically with each analysis.</p>
       </section>
 
-    </main>
+      </main>
+    </div>
   </div>
+
+  <dialog class="command-menu" id="commandMenu" aria-labelledby="commandTitle">
+    <div class="command-menu__head">
+      <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+      <label class="sr-only" for="commandInput" id="commandTitle">Search Aright Console</label>
+      <input id="commandInput" type="search" placeholder="Search actions and assets…" autocomplete="off" />
+      <kbd>Esc</kbd>
+      <button class="command-menu__close" type="button" data-command-close aria-label="Close search"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="command-menu__body">
+      <p class="command-menu__label">Quick actions</p>
+      <ul id="commandResults"></ul>
+    </div>
+    <p class="command-menu__hint"><span>↑↓ Navigate</span><span>Enter Open</span><span>Ctrl K Search</span></p>
+  </dialog>
 
   <dialog class="unlock" id="unlock" aria-labelledby="unlockTitle">
     <form id="unlockForm">

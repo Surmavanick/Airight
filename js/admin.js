@@ -55,8 +55,16 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const els = {
+  main: $("#main"),
   conn: $("#conn"),
   connText: $("#connText"),
+  topbarWorkspace: $(".topbar__workspace"),
+  newAnalysisBtn: $("#newAnalysisBtn"),
+  overviewNewAnalysis: $("#overviewNewAnalysis"),
+  overviewMetrics: $("#overviewMetrics"),
+  attentionList: $("#attentionList"),
+  recentList: $("#recentList"),
+  overviewDetectorStatus: $("#overviewDetectorStatus"),
   assetCount: $("#assetCount"),
   sideLinks: $$(".side__link"),
   views: $$(".view"),
@@ -76,6 +84,7 @@ const els = {
   useInput: $("#useInput"),
   licenseInput: $("#licenseInput"),
   provenanceInput: $("#provenanceInput"),
+  detailsSummary: $("#detailsSummary"),
   runBtn: $("#runBtn"),
   costHint: $("#costHint"),
   intakeError: $("#intakeError"),
@@ -89,11 +98,17 @@ const els = {
   errorRaw: $("#errorRaw"),
   report: $("#report"),
   kpis: $("#kpis"),
+  registerSearch: $("#registerSearch"),
+  registerStatusFilter: $("#registerStatusFilter"),
   registerBody: $("#registerBody"),
   registerEmpty: $("#registerEmpty"),
   vault: $("#vault"),
   vaultEmpty: $("#vaultEmpty"),
   exportAll: $("#exportAll"),
+  commandTrigger: $("#commandTrigger"),
+  commandMenu: $("#commandMenu"),
+  commandInput: $("#commandInput"),
+  commandResults: $("#commandResults"),
   unlock: $("#unlock"),
   unlockForm: $("#unlockForm"),
   unlockInput: $("#unlockInput"),
@@ -336,7 +351,9 @@ function renderCapabilityAvailability() {
     "Hosted audio detection is unavailable. Use the local Spectra-AASIST3 console for speech screening.";
   audioButton.disabled = unavailable;
   audioButton.setAttribute("aria-disabled", String(unavailable));
+  audioButton.setAttribute("aria-label", unavailable ? "Audio — hosted detector unavailable; use the local app" : "Audio");
   audioButton.title = unavailable ? reason : "";
+  els.audioAvailabilityBadge.textContent = "Local";
   els.audioAvailabilityBadge.hidden = !unavailable;
   els.audioAvailabilityNote.textContent = unavailable
     ? reason
@@ -347,6 +364,13 @@ function renderCapabilityAvailability() {
     setType("text");
     els.intakeError.textContent = reason;
   }
+}
+
+function setOverviewService(message, stateName) {
+  if (!els.overviewDetectorStatus) return;
+  els.overviewDetectorStatus.textContent = message;
+  const mark = $(".status-mark--service", els.overviewDetectorStatus.closest(".overview-status__item"));
+  if (mark) mark.dataset.state = stateName;
 }
 
 /* ---------- Real model service ---------- */
@@ -402,6 +426,7 @@ function renderConnection() {
     const hosted = location.protocol === "https:" || location.hostname.endsWith("vercel.app");
     els.connText.textContent = hosted ? "Hosted detector service unavailable" : "Model service offline · run start-aright.cmd";
     els.conn.title = state.server.workerError || "The Aright model service is not reachable.";
+    setOverviewService(els.connText.textContent, "offline");
     return;
   }
 
@@ -412,6 +437,7 @@ function renderConnection() {
     els.conn.dataset.state = "missing";
     els.connText.textContent = cloud ? "Cloud detectors are not configured" : "Model setup incomplete · run setup-models.ps1";
     els.conn.title = state.server.workerError || state.server.worker?.preflight?.errors?.join(" ") || "The detection service is not ready.";
+    setOverviewService(els.connText.textContent, "warning");
     return;
   }
 
@@ -422,6 +448,7 @@ function renderConnection() {
     els.conn.dataset.state = "missing";
     els.connText.textContent = "Console locked · access key required";
     els.conn.title = "Enter the ADMIN_PASSWORD configured on the server.";
+    setOverviewService("Models ready · console access required", "warning");
     openUnlock();
     return;
   }
@@ -454,6 +481,7 @@ function renderConnection() {
     : imageProvider?.configured
     ? "Images and sampled video frames are sent to AI or Not and compared with the self-hosted Community Forensics model. Text and speech stay local."
     : "Self-hosted open detection models; uploads are not sent to a third-party detector.";
+  setOverviewService(els.connText.textContent, "ready");
 }
 
 async function postDetect(kind, body, headers = {}) {
@@ -1835,12 +1863,73 @@ function showRecord(record, options) {
   renderReport(record, options);
 }
 
+function focusReportHeading() {
+  const heading = $("h2", els.report);
+  if (!heading) return;
+  heading.setAttribute("tabindex", "-1");
+  heading.focus({ preventScroll: true });
+}
+
 const currentRecord = () => state.assets.find((asset) => asset.id === state.currentId);
 
 /* ---------- Register & vault ---------- */
 function renderCollections() {
+  renderOverview();
   renderRegister();
   renderVault();
+  if (els.commandMenu?.open) renderCommandResults(els.commandInput.value);
+}
+
+function overviewRow(asset, context) {
+  const readiness = scoreOf(asset).total;
+  const statusKey = statusOf(asset);
+  const status = STATUS[statusKey];
+  const secondary = context === "attention" ? nextAction(asset) : `${TYPE_LABEL[asset.type]} · ${formatDate(asset.createdAt)}`;
+  return `
+    <button class="overview-row" type="button" data-open="${escapeHtml(asset.id)}">
+      <span class="overview-row__icon">${icon(TYPE_ICON[asset.type])}</span>
+      <span class="overview-row__copy"><strong>${escapeHtml(asset.name)}</strong><small>${escapeHtml(secondary)}</small></span>
+      <span class="overview-row__meta"><b class="score score--${iprTone(readiness)}">${readiness}</b><span class="tag tag--${status.tag}">${status.label}</span></span>
+    </button>`;
+}
+
+function renderOverview() {
+  if (!els.overviewMetrics) return;
+  const assets = [...state.assets].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const statuses = assets.map(statusOf);
+  const scores = assets.map((asset) => scoreOf(asset).total);
+  const average = scores.length ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length) : null;
+  const actionCount = statuses.filter((status) => status === "at-risk" || status === "action").length;
+  const openCount = assets.reduce((sum, asset) => sum + openTasks(asset).length, 0);
+  const completeCount = statuses.filter((status) => status === "protected").length;
+  const metrics = [
+    { value: average ?? "–", label: "Average readiness", note: scores.length ? "Across analyzed assets" : "No assets analyzed", tone: average == null ? "none" : iprTone(average), primary: true },
+    { value: actionCount, label: "Require attention", note: actionCount ? "Risk or action status" : "No urgent records", tone: actionCount ? "low" : "ok" },
+    { value: openCount, label: "Open checklist tasks", note: openCount ? "Across the workspace" : "Nothing outstanding", tone: openCount ? "mid" : "ok" },
+    { value: completeCount, label: "Review complete", note: assets.length ? `${Math.round((completeCount / assets.length) * 100)}% of assets` : "Awaiting first review", tone: completeCount ? "ok" : "none" },
+  ];
+  els.overviewMetrics.innerHTML = metrics.map((metric) => `
+    <li class="overview-metric${metric.primary ? " overview-metric--primary" : ""}">
+      <span class="overview-metric__label">${metric.label}</span>
+      <strong class="tone-${metric.tone}">${metric.value}</strong>
+      <small>${metric.note}</small>
+    </li>`).join("");
+
+  const priorityRank = { "at-risk": 0, action: 1, review: 2, protected: 3 };
+  const attention = assets
+    .filter((asset) => statusOf(asset) !== "protected")
+    .sort((a, b) => priorityRank[statusOf(a)] - priorityRank[statusOf(b)] || new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 5);
+  els.attentionList.classList.toggle("is-empty", attention.length === 0);
+  els.attentionList.innerHTML = attention.length
+    ? attention.map((asset) => overviewRow(asset, "attention")).join("")
+    : `<div class="overview-empty"><span class="overview-empty__mark">${icon("i-check")}</span><div><strong>${assets.length ? "Nothing urgent" : "No analyses yet"}</strong><p>${assets.length ? "Every current record is through review." : "Run the first asset screening to create your priority queue."}</p></div>${assets.length ? "" : `<button class="text-action" type="button" data-view-target="analyze">Start analysis</button>`}</div>`;
+
+  const recent = assets.slice(0, 5);
+  els.recentList.classList.toggle("is-empty", recent.length === 0);
+  els.recentList.innerHTML = recent.length
+    ? recent.map((asset) => overviewRow(asset, "recent")).join("")
+    : `<div class="overview-empty"><span class="overview-empty__mark overview-empty__mark--muted">${icon("i-clock")}</span><div><strong>No recent activity</strong><p>Completed analyses will appear here automatically.</p></div></div>`;
 }
 
 function renderRegister() {
@@ -1858,12 +1947,20 @@ function renderRegister() {
   ];
   els.kpis.innerHTML = kpis.map(([value, label]) => `<li class="kpi"><strong>${value}</strong><span>${label}</span></li>`).join("");
 
-  els.registerEmpty.hidden = assets.length > 0;
-  els.registerBody.innerHTML = assets
-    .map((asset, i) => {
+  const query = String(els.registerSearch?.value || "").trim().toLowerCase();
+  const statusFilter = els.registerStatusFilter?.value || "all";
+  const visibleAssets = assets.filter((asset) => {
+    const matchesQuery = !query || `${asset.name} ${asset.id} ${TYPE_LABEL[asset.type]}`.toLowerCase().includes(query);
+    const matchesStatus = statusFilter === "all" || statusOf(asset) === statusFilter;
+    return matchesQuery && matchesStatus;
+  });
+  els.registerEmpty.hidden = visibleAssets.length > 0;
+  els.registerEmpty.textContent = assets.length ? "No assets match the current search or status filter." : "No assets yet. Run your first analysis to start the register.";
+  els.registerBody.innerHTML = visibleAssets
+    .map((asset) => {
       const ai = asset.detection.aiPct;
-      const score = scores[i];
-      const status = STATUS[statuses[i]];
+      const score = scoreOf(asset).total;
+      const status = STATUS[statusOf(asset)];
       const name = escapeHtml(asset.name);
       return `
         <tr>
@@ -1986,9 +2083,61 @@ function deleteAsset(id) {
   renderCollections();
 }
 
+/* ---------- Command menu ---------- */
+function renderCommandResults(query = "") {
+  if (!els.commandResults) return;
+  const needle = query.trim().toLowerCase();
+  const actions = [
+    { label: "Overview", detail: "Workspace status and recent activity", view: "overview", icon: "i-home" },
+    { label: "New analysis", detail: "Screen a text, image, video or audio asset", view: "analyze", icon: "i-plus" },
+    { label: "Asset register", detail: "Browse readiness and review status", view: "assets", icon: "i-facet" },
+    { label: "Evidence vault", detail: "Export fingerprints and model records", view: "evidence", icon: "i-folder" },
+  ].filter((item) => !needle || `${item.label} ${item.detail}`.toLowerCase().includes(needle));
+  const assets = state.assets
+    .filter((asset) => !needle || `${asset.name} ${asset.id} ${TYPE_LABEL[asset.type]}`.toLowerCase().includes(needle))
+    .slice(0, 6);
+  const actionRows = actions.map((item) => `
+    <li><button type="button" data-command-view="${item.view}">${icon(item.icon)}<span><strong>${item.label}</strong><small>${item.detail}</small></span><kbd>↵</kbd></button></li>`).join("");
+  const assetRows = assets.map((asset) => `
+    <li><button type="button" data-command-open="${escapeHtml(asset.id)}">${icon(TYPE_ICON[asset.type])}<span><strong>${escapeHtml(asset.name)}</strong><small>${escapeHtml(asset.id)} · ${TYPE_LABEL[asset.type]} · IPR ${scoreOf(asset).total}</small></span><kbd>↵</kbd></button></li>`).join("");
+  els.commandResults.innerHTML = `${actionRows}${assets.length ? `<li class="command-menu__divider"><span>Assets</span></li>${assetRows}` : ""}${!actionRows && !assetRows ? `<li class="command-menu__empty">No matching actions or assets</li>` : ""}`;
+}
+
+function openCommandMenu() {
+  if (!els.commandMenu || document.body.classList.contains("is-locked") || document.body.classList.contains("is-checking-access")) return;
+  els.commandInput.value = "";
+  renderCommandResults();
+  if (typeof els.commandMenu.showModal === "function") els.commandMenu.showModal();
+  else els.commandMenu.setAttribute("open", "");
+  requestAnimationFrame(() => els.commandInput.focus());
+}
+
+function closeCommandMenu() {
+  els.commandMenu.close?.();
+  els.commandMenu.removeAttribute("open");
+}
+
+function executeCommand(button) {
+  const view = button?.dataset.commandView;
+  const id = button?.dataset.commandOpen;
+  closeCommandMenu();
+  if (view) {
+    showView(view, { focus: true });
+    return;
+  }
+  if (id) {
+    const record = state.assets.find((asset) => asset.id === id);
+    if (!record) return;
+    showView("analyze");
+    showRecord(record);
+    els.results.scrollIntoView({ block: "start" });
+    focusReportHeading();
+  }
+}
+
 /* ---------- Views ---------- */
 function showView(name, { focus = false } = {}) {
-  const view = els.views.find((v) => v.id === `view-${name}`) ? name : "analyze";
+  const view = els.views.find((v) => v.id === `view-${name}`) ? name : "overview";
   els.sideLinks.forEach((link) => {
     const active = link.dataset.view === view;
     link.classList.toggle("is-active", active);
@@ -2000,7 +2149,9 @@ function showView(name, { focus = false } = {}) {
     v.classList.toggle("is-active", !v.hidden);
   });
   const routeBase = `${location.pathname}${location.search}`;
-  history.replaceState(null, "", view === "analyze" ? routeBase : `${routeBase}#${view}`);
+  history.replaceState(null, "", view === "overview" ? routeBase : `${routeBase}#${view}`);
+  const labels = { overview: "Overview", analyze: "New analysis", assets: "Asset register", evidence: "Evidence vault" };
+  if (els.topbarWorkspace) els.topbarWorkspace.textContent = labels[view];
   window.scrollTo({ top: 0 });
   if (focus) $(`#view-${view} .view__title`)?.focus({ preventScroll: true });
 }
@@ -2050,6 +2201,20 @@ function updateCostHint() {
       : "Spectra-AASIST3 · synthetic or cloned speech only.",
   };
   els.costHint.textContent = hints[state.type];
+}
+
+function updateDetailsSummary() {
+  if (!els.detailsSummary) return;
+  const human = {
+    none: "No human contribution",
+    light: "Light contribution",
+    substantial: "Substantial contribution",
+    human: "Human-made",
+  }[els.humanInput.value];
+  const intendedUse = { internal: "Internal", commercial: "Commercial", brand: "Brand use" }[els.useInput.value];
+  const licence = { yes: "Licence checked", unsure: "Licence unchecked", no: "Use not allowed" }[els.licenseInput.value];
+  const provenance = els.provenanceInput.checked ? "Sources saved" : "Sources not saved";
+  els.detailsSummary.textContent = `${human} · ${intendedUse} · ${licence} · ${provenance}`;
 }
 
 function updateCharCount() {
@@ -2130,6 +2295,7 @@ function prefillFrom(record) {
     updateCharCount();
   }
   if (record.type === "audio") els.transcriptInput.value = record.detection.transcript?.text || "";
+  updateDetailsSummary();
   updateCostHint();
   showView("analyze");
   els.intake.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
@@ -2153,6 +2319,22 @@ els.unlock.addEventListener("cancel", (event) => {
 els.sideLinks.forEach((link) => {
   link.addEventListener("click", () => showView(link.dataset.view, { focus: true }));
 });
+
+els.main.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-view-target], [data-overview-view]");
+  if (target) {
+    showView(target.dataset.viewTarget || target.dataset.overviewView, { focus: true });
+    return;
+  }
+  const shortcut = event.target.closest("[data-empty-type]");
+  if (shortcut) {
+    setType(shortcut.dataset.emptyType);
+    $("[data-pane]:not([hidden]) textarea, [data-pane]:not([hidden]) .drop__input")?.focus({ preventScroll: true });
+  }
+});
+
+els.newAnalysisBtn.addEventListener("click", () => showView("analyze", { focus: true }));
+els.overviewNewAnalysis.addEventListener("click", () => showView("analyze", { focus: true }));
 
 els.typeButtons.forEach((button, index) => {
   button.addEventListener("click", () => setType(button.dataset.type));
@@ -2201,6 +2383,9 @@ els.intake.addEventListener("submit", (event) => {
 els.textInput.addEventListener("input", updateCharCount);
 els.transcriptInput.addEventListener("input", updateCostHint);
 els.frameCount.addEventListener("change", updateCostHint);
+[els.humanInput, els.useInput, els.licenseInput, els.provenanceInput].forEach((input) => input.addEventListener("change", updateDetailsSummary));
+els.registerSearch.addEventListener("input", renderRegister);
+els.registerStatusFilter.addEventListener("change", renderRegister);
 
 els.report.addEventListener("change", (event) => {
   const input = event.target.closest("[data-task]");
@@ -2252,13 +2437,57 @@ function onCollectionClick(event) {
     showView("analyze");
     showRecord(record);
     els.results.scrollIntoView({ block: "start" });
+    focusReportHeading();
   }
 }
 
-window.addEventListener("hashchange", () => showView(location.hash.slice(1) || "analyze"));
+window.addEventListener("hashchange", () => showView(location.hash.slice(1) || "overview"));
 
 els.registerBody.addEventListener("click", onCollectionClick);
 els.vault.addEventListener("click", onCollectionClick);
+els.attentionList.addEventListener("click", onCollectionClick);
+els.recentList.addEventListener("click", onCollectionClick);
+
+els.commandTrigger.addEventListener("click", openCommandMenu);
+els.commandMenu.addEventListener("click", (event) => {
+  if (event.target.closest("[data-command-close]")) closeCommandMenu();
+});
+els.commandInput.addEventListener("input", () => renderCommandResults(els.commandInput.value));
+els.commandResults.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-command-view], [data-command-open]");
+  if (button) executeCommand(button);
+});
+els.commandInput.addEventListener("keydown", (event) => {
+  const buttons = $$("#commandResults button");
+  if (event.key === "Enter" && buttons[0]) {
+    event.preventDefault();
+    executeCommand(buttons[0]);
+  }
+  if (event.key === "ArrowDown" && buttons[0]) {
+    event.preventDefault();
+    buttons[0].focus();
+  }
+});
+els.commandResults.addEventListener("keydown", (event) => {
+  if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+  const buttons = $$("#commandResults button");
+  const current = buttons.indexOf(document.activeElement);
+  if (event.key === "Enter" && current >= 0) {
+    event.preventDefault();
+    executeCommand(buttons[current]);
+    return;
+  }
+  if (!buttons.length) return;
+  event.preventDefault();
+  const next = event.key === "ArrowDown" ? (current + 1) % buttons.length : (current <= 0 ? buttons.length - 1 : current - 1);
+  buttons[next].focus();
+});
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    openCommandMenu();
+  }
+});
 
 els.exportAll.addEventListener("click", () => {
   if (!state.assets.length) return;
@@ -2287,8 +2516,9 @@ els.unlockForm.addEventListener("submit", async (event) => {
 $$(".view__title").forEach((title) => title.setAttribute("tabindex", "-1"));
 setType("text");
 updateCharCount();
+updateDetailsSummary();
 updateFlow("upload");
-showView(location.hash.slice(1) || "analyze");
+showView(location.hash.slice(1) || "overview");
 checkServer();
 window.setInterval(() => {
   if (!state.busy && document.visibilityState === "visible") checkServer();
