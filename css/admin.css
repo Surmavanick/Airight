@@ -383,6 +383,19 @@
   color: var(--ink);
 }
 
+.types__btn:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.types__availability {
+  font-size: 0.58rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--maroon);
+}
+
 .types__btn.is-active {
   background: #fff;
   color: var(--maroon);

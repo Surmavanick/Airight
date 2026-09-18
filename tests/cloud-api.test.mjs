@@ -93,9 +93,70 @@ test("status is readiness-only and requires console authorization", async () => 
   assert.equal(lockedBody.authRequired, true);
   assert.equal(lockedBody.authorized, false);
   assert.equal(lockedBody.providers.image.localComparison, false);
+  assert.equal(lockedBody.providers.audio.configured, false);
+  assert.equal(lockedBody.capabilities.audioSpeech, false);
 
   const unlocked = await handleStatus(request("/api/status", { headers: { "X-Admin-Key": env.ADMIN_PASSWORD } }), { env });
   assert.equal((await unlocked.json()).authorized, true);
+});
+
+test("hosted audio is fail-closed unless the account capability is explicitly enabled", async () => {
+  let calls = 0;
+  const response = await handleDetection(request("/api/detect/audio", {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "X-Sample-Rate": "16000", "X-Admin-Key": env.ADMIN_PASSWORD },
+    body: Buffer.from(new Float32Array([0, 0.1, -0.1]).buffer),
+  }), { env, fetchImpl: async () => { calls += 1; return jsonResponse({}); } });
+  const body = await response.json();
+  assert.equal(response.status, 503);
+  assert.equal(body.type, "AUDIO_DETECTOR_UNAVAILABLE");
+  assert.match(body.error, /local Spectra-AASIST3/i);
+  assert.equal(calls, 0);
+
+  const enabledStatus = await handleStatus(request("/api/status"), {
+    env: { ...env, AIORNOT_AUDIO_ENABLED: "true" },
+  });
+  const enabledBody = await enabledStatus.json();
+  assert.equal(enabledBody.providers.audio.configured, true);
+  assert.equal(enabledBody.capabilities.audioSpeech, true);
+});
+
+test("provider model-disabled 403 is not mislabeled as a bad API key", async () => {
+  const enabledEnv = { ...env, AIORNOT_AUDIO_ENABLED: "true" };
+  const samples = new Float32Array(16_000);
+  const response = await handleDetection(request("/api/detect/audio", {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "X-Sample-Rate": "16000", "X-Admin-Key": env.ADMIN_PASSWORD },
+    body: Buffer.from(samples.buffer),
+  }), {
+    env: enabledEnv,
+    fetchImpl: async () => jsonResponse({ detail: "model ai_voice disabled for plan_version 14" }, 403),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 503);
+  assert.equal(body.type, "PROVIDER_MODEL_UNAVAILABLE");
+  assert.match(body.error, /voice detection is not enabled/i);
+  assert.doesNotMatch(body.error, /rejected the configured API key/i);
+  assert.doesNotMatch(JSON.stringify(body), new RegExp(env.AIORNOT_API_KEY));
+});
+
+test("generic provider 403 is reported as access denial, not invalid credentials", async () => {
+  const enabledEnv = { ...env, AIORNOT_AUDIO_ENABLED: "true" };
+  const samples = new Float32Array(16_000);
+  const response = await handleDetection(request("/api/detect/audio", {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "X-Sample-Rate": "16000", "X-Admin-Key": env.ADMIN_PASSWORD },
+    body: Buffer.from(samples.buffer),
+  }), {
+    env: enabledEnv,
+    fetchImpl: async () => jsonResponse({ detail: "Forbidden for this account", api_key: env.AIORNOT_API_KEY }, 403),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 502);
+  assert.equal(body.type, "PROVIDER_ACCESS_DENIED");
+  assert.match(body.error, /account plan enables the requested model/i);
+  assert.doesNotMatch(body.error, /rejected the configured API key/i);
+  assert.doesNotMatch(JSON.stringify(body), new RegExp(env.AIORNOT_API_KEY));
 });
 
 test("unauthorized and invalid image requests spend no provider call", async () => {

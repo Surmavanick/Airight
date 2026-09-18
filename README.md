@@ -8,6 +8,7 @@ The production deployment is a static site plus zero-dependency Node functions i
 
 - `AIORNOT_API_KEY`: AI or Not server credential; never expose it to browser code.
 - `ADMIN_PASSWORD`: a strong console access key. Hosted detector calls deliberately stay disabled if this is missing.
+- `AIORNOT_AUDIO_ENABLED` (optional): defaults to `false`. Set it to `true` only if the AI or Not account plan has the `ai_voice` model enabled. It does not affect local Spectra-AASIST3.
 - `AIORNOT_TIMEOUT_MS` (optional): provider timeout; defaults to 120000.
 
 Deploy from the Vercel dashboard after importing this repository, or with the CLI:
@@ -21,7 +22,7 @@ corepack pnpm dlx vercel --prod
 
 After the first deployment, add a Vercel Firewall rate-limit rule for `/api/detect/(.*)` (for example 12 requests per 60 seconds per source). The code also has a small in-process guard, but that guard is only best-effort because serverless instances scale independently. Keep AI or Not account spend alerts/limits enabled, and rotate any credential that has ever been shared outside the provider dashboard.
 
-Vercel Functions have a hard 4.5 MB request/response limit, so Aright caps hosted raw uploads at 4 MiB. Images and TXT files use that cap. Audio is decoded in the browser and sent as at most 60 seconds of 16 kHz mono PCM, then converted to WAV in the function. The full video never leaves the browser: 3, 5, or 8 sampled JPEG frames are checked individually. PDF/DOCX extraction remains available in the local launcher; on the hosted console, paste their extracted text or upload TXT.
+Vercel Functions have a hard 4.5 MB request/response limit, so Aright caps hosted raw uploads at 4 MiB. Images and TXT files use that cap. When explicitly enabled, audio is decoded in the browser and sent as at most 60 seconds of 16 kHz mono PCM, then converted to WAV in the function. The full video never leaves the browser: 3, 5, or 8 sampled JPEG frames are checked individually. PDF/DOCX extraction remains available in the local launcher; on the hosted console, paste their extracted text or upload TXT.
 
 ## Start the working console
 
@@ -49,7 +50,7 @@ Hosted Vercel runtime:
 - **Text:** AI or Not v2 text analysis with block annotations; provider limits are 250–500,000 characters and approximately 64 words minimum.
 - **Images:** AI or Not v2 `ai_generated` report. ≤25% is a low-signal band, ≥75% a high-signal band, and the middle is inconclusive. The bands are Aright review policy, not proof.
 - **Video:** browser-sampled frames sent to the same image endpoint. This is not full temporal/face-swap/audio analysis and uses one provider request per frame.
-- **Audio:** AI or Not voice analysis of speech. It does not detect AI music; an optional supplied script receives a separate text check.
+- **Audio:** disabled by default because AI or Not voice access depends on the account plan. Set `AIORNOT_AUDIO_ENABLED=true` only after `ai_voice` access is confirmed. Otherwise the UI directs users to the local Spectra-AASIST3 console. It does not detect AI music.
 
 Local launcher runtime:
 
@@ -64,7 +65,7 @@ Detector scores are screening signals, not calibrated proof of authorship or inf
 
 ## Data and access
 
-The local Node/Python service binds to `127.0.0.1`. Text, documents, and speech are processed by the self-hosted worker. When `AIORNOT_API_KEY` is configured, image bytes and sampled video frames are also sent to AI or Not for external inference. The hosted runtime sends text, images, sampled frames, and voice audio to AI or Not. The vendor states uploads are deleted after inference, but its privacy policy and account billing still apply. Aright does not save uploaded bytes server-side.
+The local Node/Python service binds to `127.0.0.1`. Text, documents, and speech are processed by the self-hosted worker. When `AIORNOT_API_KEY` is configured, image bytes and sampled video frames are also sent to AI or Not for external inference. The hosted runtime sends text, images and sampled frames to AI or Not; it sends voice audio only when `AIORNOT_AUDIO_ENABLED=true`. The vendor states uploads are deleted after inference, but its privacy policy and account billing still apply. Aright does not save uploaded bytes server-side.
 
 Reports and workflow state are stored in the browser's `localStorage`; download JSON evidence for a durable copy. That storage is unencrypted, per-browser, user-editable, and not a tamper-evident evidence vault or multi-user security boundary.
 

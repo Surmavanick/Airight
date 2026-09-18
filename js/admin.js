@@ -67,6 +67,8 @@ const els = {
   textInput: $("#textInput"),
   charCount: $("#charCount"),
   transcriptInput: $("#transcriptInput"),
+  audioAvailabilityBadge: $("#audioAvailabilityBadge"),
+  audioAvailabilityNote: $("#audioAvailabilityNote"),
   frameCount: $("#frameCount"),
   assetName: $("#assetName"),
   aiTool: $("#aiTool"),
@@ -105,7 +107,7 @@ const state = {
   usedUrls: new Set(),
   previews: new Map(),
   expandedQuotes: new Set(),
-  server: { online: false, ready: false, deployment: "", provider: "", providers: {}, worker: null, authRequired: false, authorized: false },
+  server: { online: false, ready: false, deployment: "", provider: "", providers: {}, capabilities: {}, worker: null, authRequired: false, authorized: false },
   assets: [],
   assetsLoaded: false,
   currentId: null,
@@ -322,6 +324,31 @@ function isCloudService() {
   return state.server.deployment.startsWith("vercel") || state.server.provider === "aiornot-cloud";
 }
 
+function isHostedAudioAvailable() {
+  if (!isCloudService()) return true;
+  return state.server.capabilities?.audioSpeech === true && state.server.providers?.audio?.configured === true;
+}
+
+function renderCapabilityAvailability() {
+  const audioButton = els.typeButtons.find((button) => button.dataset.type === "audio");
+  const unavailable = isCloudService() && !isHostedAudioAvailable();
+  const reason = state.server.providers?.audio?.disabledReason ||
+    "Hosted audio detection is unavailable. Use the local Spectra-AASIST3 console for speech screening.";
+  audioButton.disabled = unavailable;
+  audioButton.setAttribute("aria-disabled", String(unavailable));
+  audioButton.title = unavailable ? reason : "";
+  els.audioAvailabilityBadge.hidden = !unavailable;
+  els.audioAvailabilityNote.textContent = unavailable
+    ? reason
+    : isCloudService()
+      ? "The hosted console sends a 16 kHz voice sample to AI or Not. It screens synthetic or cloned speech, not AI music. A supplied script is checked separately."
+      : "The local app uses Spectra-AASIST3 for synthetic or cloned speech screening, not AI music. A supplied script is checked separately with the local text model.";
+  if (unavailable && state.type === "audio") {
+    setType("text");
+    els.intakeError.textContent = reason;
+  }
+}
+
 /* ---------- Real model service ---------- */
 async function checkServer() {
   els.conn.dataset.state = "checking";
@@ -338,6 +365,7 @@ async function checkServer() {
       deployment: String(data.deployment || ""),
       provider: data.provider || "",
       providers: data.providers && typeof data.providers === "object" ? data.providers : {},
+      capabilities: data.capabilities && typeof data.capabilities === "object" ? data.capabilities : {},
       worker: data.worker || null,
       workerError: data.workerError || "",
       authRequired: Boolean(data.authRequired),
@@ -350,6 +378,7 @@ async function checkServer() {
       deployment: "",
       provider: "",
       providers: {},
+      capabilities: {},
       worker: null,
       workerError: error.message || "Connection failed",
       authRequired: false,
@@ -363,6 +392,7 @@ async function checkServer() {
 function renderConnection() {
   const serviceReady = isServiceReady();
   const cloud = isCloudService();
+  renderCapabilityAvailability();
 
   if (!state.server.online) {
     unloadAuthorizedAssets();
@@ -403,10 +433,13 @@ function renderConnection() {
   const uniqueModels = new Set(models.map((model) => model.id)).size;
   const loaded = new Set(models.filter((model) => model.loaded).map((model) => model.id)).size;
   const imageProvider = state.server.providers?.image;
+  const cloudAudioReady = isHostedAudioAvailable();
   els.conn.dataset.state = "ready";
   document.body.classList.remove("is-checking-access", "is-locked");
   els.connText.textContent = cloud
-    ? "AI or Not cloud detectors ready"
+    ? cloudAudioReady
+      ? "AI or Not cloud detectors ready"
+      : "AI or Not text and image detectors ready"
     : imageProvider?.configured
     ? loaded
       ? `AI or Not + local models · ${loaded}/${uniqueModels} loaded`
@@ -415,7 +448,9 @@ function renderConnection() {
       ? `Local models ready · ${loaded}/${uniqueModels} loaded`
       : "Local models ready · load on first scan";
   els.conn.title = cloud
-    ? "Text, images, sampled video frames and speech are sent to AI or Not through Aright's server-side proxy. API credentials never enter the browser."
+    ? cloudAudioReady
+      ? "Text, images, sampled video frames and speech are sent to AI or Not through Aright's server-side proxy. API credentials never enter the browser."
+      : "Text, images and sampled video frames are sent to AI or Not through Aright's server-side proxy. Hosted audio is unavailable; use the local Spectra-AASIST3 console for speech screening."
     : imageProvider?.configured
     ? "Images and sampled video frames are sent to AI or Not and compared with the self-hosted Community Forensics model. Text and speech stay local."
     : "Self-hosted open detection models; uploads are not sent to a third-party detector.";
@@ -1135,6 +1170,9 @@ function missingInput(type) {
   }
   if (type === "image" && !state.files.image) return "Choose an image to analyze.";
   if (type === "video" && !state.files.video) return "Choose a video to analyze.";
+  if (type === "audio" && isCloudService() && !isHostedAudioAvailable()) {
+    return state.server.providers?.audio?.disabledReason || "Hosted audio detection is unavailable. Use the local Spectra-AASIST3 console.";
+  }
   if (type === "audio" && !state.files.audio) return "Upload an audio file for speech analysis.";
   if (type === "audio" && isCloudService() && els.transcriptInput.value.trim()) {
     const transcript = els.transcriptInput.value.trim();
@@ -1258,6 +1296,9 @@ async function analyze(type) {
   }
 
   const file = state.files.audio;
+  if (isCloudService() && !isHostedAudioAvailable()) {
+    throw new ApiError("Hosted audio detection is unavailable. Use the local Spectra-AASIST3 console for speech screening.", 503);
+  }
   const transcript = els.transcriptInput.value.trim();
   setLoading("Checking the audio duration…");
   const audioDuration = await readAudioDuration(file);
@@ -1966,6 +2007,11 @@ function showView(name, { focus = false } = {}) {
 
 /* ---------- Intake ---------- */
 function setType(type, moveFocus = false) {
+  const requested = els.typeButtons.find((button) => button.dataset.type === type);
+  if (requested?.disabled) {
+    els.intakeError.textContent = requested.title || `${TYPE_LABEL[type]} analysis is unavailable.`;
+    return;
+  }
   state.type = type;
   els.typeButtons.forEach((button) => {
     const active = button.dataset.type === type;
@@ -1996,7 +2042,9 @@ function updateCostHint() {
       ? `${els.frameCount.value} sampled frames · each uses AI or Not${localComparison ? " + local comparison" : ""}.`
       : `${els.frameCount.value} sampled frames · local Community Forensics only.`,
     audio: cloud
-      ? `AI or Not voice detector${els.transcriptInput.value.trim() ? " + separate AI or Not script check" : ""} · speech only.`
+      ? isHostedAudioAvailable()
+        ? `AI or Not voice detector${els.transcriptInput.value.trim() ? " + separate AI or Not script check" : ""} · speech only.`
+        : "Hosted audio detection unavailable · use the local Spectra-AASIST3 console."
       : els.transcriptInput.value.trim()
       ? "Spectra-AASIST3 speech screening + separate RoBERTa script screening."
       : "Spectra-AASIST3 · synthetic or cloned speech only.",
@@ -2110,9 +2158,11 @@ els.typeButtons.forEach((button, index) => {
   button.addEventListener("click", () => setType(button.dataset.type));
   button.addEventListener("keydown", (event) => {
     const last = els.typeButtons.length - 1;
-    const next = { ArrowRight: index === last ? 0 : index + 1, ArrowLeft: index === 0 ? last : index - 1, Home: 0, End: last }[event.key];
+    let next = { ArrowRight: index === last ? 0 : index + 1, ArrowLeft: index === 0 ? last : index - 1, Home: 0, End: last }[event.key];
     if (next === undefined) return;
     event.preventDefault();
+    const direction = event.key === "ArrowLeft" || event.key === "End" ? -1 : 1;
+    while (els.typeButtons[next]?.disabled && next !== index) next = (next + direction + els.typeButtons.length) % els.typeButtons.length;
     setType(els.typeButtons[next].dataset.type, true);
   });
 });

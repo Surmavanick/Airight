@@ -100,7 +100,7 @@
                 <svg class="icon" aria-hidden="true"><use href="#i-video"/></svg>Video
               </button>
               <button class="types__btn" type="button" role="tab" id="type-audio" aria-selected="false" aria-controls="pane-audio" data-type="audio" tabindex="-1">
-                <svg class="icon" aria-hidden="true"><use href="#i-audio"/></svg>Audio
+                <svg class="icon" aria-hidden="true"><use href="#i-audio"/></svg><span>Audio</span><small class="types__availability" id="audioAvailabilityBadge" hidden>Unavailable hosted</small>
               </button>
             </div>
 
@@ -174,7 +174,7 @@
                 <span class="field__label">Lyrics or voice-over script</span>
                 <textarea id="transcriptInput" rows="5" placeholder="Optional: paste the words for a separate text-model check"></textarea>
               </label>
-              <p class="note">The hosted console sends a 16 kHz voice sample to AI or Not; the local app uses Spectra-AASIST3. Both screen synthetic or cloned speech, not AI music. A supplied script is checked separately.</p>
+              <p class="note" id="audioAvailabilityNote">The hosted console sends a 16 kHz voice sample to AI or Not when voice access is enabled; the local app uses Spectra-AASIST3. Both screen synthetic or cloned speech, not AI music. A supplied script is checked separately.</p>
             </div>
 
             <fieldset class="details">
