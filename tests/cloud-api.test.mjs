@@ -14,6 +14,30 @@ import {
 } from "../lib/cloud-api.mjs";
 
 const env = { AIORNOT_API_KEY: "test-provider-key", ADMIN_PASSWORD: "test-console-key", AIORNOT_TIMEOUT_MS: "5000" };
+const backupEnv = {
+  ...env,
+  AIORNOT_API_KEY_BACKUP: `${env.AIORNOT_API_KEY}-backup`,
+  AIORNOT_MAX_REQUESTS_PER_MINUTE: "1000",
+  AIORNOT_MAX_CONCURRENT: "8",
+};
+
+const validText = "This is a sufficiently long plain text sample for the official detector. ".repeat(6);
+
+function textRequest(text = validText) {
+  return request("/api/detect/text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": env.ADMIN_PASSWORD },
+    body: JSON.stringify({ text }),
+  });
+}
+
+function textProviderPayload(id = "text-id", confidence = 0.82) {
+  return {
+    id,
+    report: { ai_text: { confidence, is_detected: confidence >= 0.5, annotations: [] } },
+    metadata: { word_count: 70 },
+  };
+}
 
 function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -201,7 +225,9 @@ test("unauthorized and invalid image requests spend no provider call", async () 
 
 test("valid image request sends one metered multipart call and normalizes it", async () => {
   let captured;
+  let calls = 0;
   const fetchImpl = async (url, init) => {
+    calls += 1;
     captured = { url: String(url), init };
     return jsonResponse({
       id: "real-id",
@@ -215,13 +241,16 @@ test("valid image request sends one metered multipart call and normalizes it", a
     method: "POST",
     headers: { "Content-Type": "image/jpeg", "X-File-Name": "test.jpg", "X-Admin-Key": env.ADMIN_PASSWORD },
     body: jpeg,
-  }), { env, fetchImpl });
+  }), { env: backupEnv, fetchImpl });
   const body = await response.json();
   assert.equal(response.status, 200);
+  assert.equal(calls, 1);
   assert.equal(body.data.ai_score, 0.88);
   assert.equal(body.data.verdict, "likely_ai");
   assert.equal(body.raw.providerResponse.api_key, "[redacted]");
   assert.equal(body.raw.providerResponse.debug, "provider=[redacted]");
+  assert.equal(body.raw.providerExecution.credentialSlot, "primary");
+  assert.equal(body.raw.providerExecution.failoverUsed, false);
   assert.doesNotMatch(JSON.stringify(body), new RegExp(env.AIORNOT_API_KEY));
   assert.match(captured.url, /\/v2\/image\/sync\?only=ai_generated&external_id=aright-/);
   assert.ok(captured.init.body.get("image") instanceof Blob);
@@ -310,4 +339,128 @@ test("cross-origin calls are rejected before provider access", async () => {
   }), { env, fetchImpl: async () => { calls += 1; return jsonResponse({}); } });
   assert.equal(response.status, 403);
   assert.equal(calls, 0);
+});
+
+test("backup status is boolean-only, deduplicated, and still requires a primary credential", async () => {
+  const configured = await handleStatus(request("/api/status"), { env: backupEnv });
+  const configuredText = await configured.text();
+  const configuredBody = JSON.parse(configuredText);
+  assert.equal(configuredBody.ready, true);
+  assert.equal(configuredBody.providerFailover.configured, true);
+  assert.doesNotMatch(configuredText, new RegExp(backupEnv.AIORNOT_API_KEY));
+  assert.doesNotMatch(configuredText, new RegExp(backupEnv.AIORNOT_API_KEY_BACKUP));
+
+  const duplicate = await handleStatus(request("/api/status"), {
+    env: { ...backupEnv, AIORNOT_API_KEY_BACKUP: backupEnv.AIORNOT_API_KEY },
+  });
+  assert.equal((await duplicate.json()).providerFailover.configured, false);
+
+  const backupOnly = await handleStatus(request("/api/status"), {
+    env: { ...backupEnv, AIORNOT_API_KEY: "" },
+  });
+  const backupOnlyBody = await backupOnly.json();
+  assert.equal(backupOnlyBody.ready, false);
+  assert.equal(backupOnlyBody.providerFailover.configured, false);
+});
+
+test("401 failover rebuilds image multipart and records sanitized backup execution", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (calls.length === 1) return new Response("unauthorized", { status: 401 });
+    return jsonResponse({
+      id: "backup-image-id",
+      debug: `${backupEnv.AIORNOT_API_KEY}|${backupEnv.AIORNOT_API_KEY_BACKUP}`,
+      report: { ai_generated: { verdict: "ai", ai: { confidence: 0.91 }, human: { confidence: 0.09 }, generator: {} } },
+    });
+  };
+  const jpeg = await readFile(new URL("../assets/img/hero.jpg", import.meta.url));
+  const response = await handleDetection(request("/api/detect/image", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg", "X-File-Name": "test.jpg", "X-Admin-Key": env.ADMIN_PASSWORD },
+    body: jpeg,
+  }), { env: backupEnv, fetchImpl });
+  const body = await response.json();
+  const serialized = JSON.stringify(body);
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${backupEnv.AIORNOT_API_KEY}`);
+  assert.equal(calls[1].init.headers.Authorization, `Bearer ${backupEnv.AIORNOT_API_KEY_BACKUP}`);
+  assert.notEqual(calls[0].init.body, calls[1].init.body);
+  assert.ok(calls[0].init.body.get("image") instanceof Blob);
+  assert.ok(calls[1].init.body.get("image") instanceof Blob);
+  assert.equal(body.raw.providerExecution.credentialSlot, "backup");
+  assert.equal(body.raw.providerExecution.attemptCount, 2);
+  assert.equal(body.raw.providerExecution.failoverUsed, true);
+  assert.equal(body.raw.providerExecution.failoverReason, "PROVIDER_AUTH_FAILED");
+  assert.doesNotMatch(serialized, new RegExp(backupEnv.AIORNOT_API_KEY));
+  assert.doesNotMatch(serialized, new RegExp(backupEnv.AIORNOT_API_KEY_BACKUP));
+});
+
+test("402 and 403 provider rejections use the backup with explicit internal reasons", async () => {
+  for (const scenario of [
+    { status: 402, payload: { error: "credits" }, reason: "PROVIDER_CREDITS_UNAVAILABLE" },
+    { status: 403, payload: { error: "forbidden" }, reason: "PROVIDER_ACCESS_DENIED" },
+  ]) {
+    const calls = [];
+    const response = await handleDetection(textRequest(), {
+      env: backupEnv,
+      fetchImpl: async (_url, init) => {
+        calls.push(init);
+        return calls.length === 1
+          ? jsonResponse(scenario.payload, scenario.status)
+          : jsonResponse(textProviderPayload(`backup-${scenario.status}`));
+      },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].headers.Authorization, `Bearer ${backupEnv.AIORNOT_API_KEY}`);
+    assert.equal(calls[1].headers.Authorization, `Bearer ${backupEnv.AIORNOT_API_KEY_BACKUP}`);
+    assert.equal(calls[0].body.get("text"), validText.trim());
+    assert.equal(calls[1].body.get("text"), validText.trim());
+    assert.equal(body.raw.providerExecution.failoverReason, scenario.reason);
+  }
+});
+
+test("ambiguous or shared failures never trigger credential failover", async () => {
+  const scenarios = [
+    { name: "input", responder: () => jsonResponse({ error: "bad input" }, 422), type: "PROVIDER_REJECTED_INPUT" },
+    { name: "rate", responder: () => jsonResponse({ error: "rate" }, 429), type: "PROVIDER_RATE_LIMIT" },
+    { name: "server", responder: () => jsonResponse({ error: "server" }, 503), type: "PROVIDER_HTTP_503" },
+    { name: "invalid-json", responder: () => new Response("not-json", { status: 200 }), type: "INVALID_PROVIDER_RESPONSE" },
+    { name: "network", responder: () => { throw new Error("network down"); }, type: "PROVIDER_UNREACHABLE" },
+    { name: "timeout", responder: () => { const error = new Error("timeout"); error.name = "TimeoutError"; throw error; }, type: "PROVIDER_TIMEOUT" },
+  ];
+  for (const scenario of scenarios) {
+    let calls = 0;
+    const response = await handleDetection(textRequest(), {
+      env: backupEnv,
+      fetchImpl: async () => {
+        calls += 1;
+        return scenario.responder();
+      },
+    });
+    const body = await response.json();
+    assert.equal(calls, 1, `${scenario.name} should not use the backup credential`);
+    assert.equal(body.type, scenario.type);
+  }
+});
+
+test("both rejected credentials return one generic sanitized failure", async () => {
+  const authorizations = [];
+  const response = await handleDetection(textRequest(), {
+    env: backupEnv,
+    fetchImpl: async (_url, init) => {
+      authorizations.push(init.headers.Authorization);
+      const key = authorizations.length === 1 ? backupEnv.AIORNOT_API_KEY : backupEnv.AIORNOT_API_KEY_BACKUP;
+      return jsonResponse({ authorization: key, detail: `rejected ${key}` }, authorizations.length === 1 ? 401 : 403);
+    },
+  });
+  const text = await response.text();
+  const body = JSON.parse(text);
+  assert.equal(authorizations.length, 2);
+  assert.equal(body.type, "PROVIDER_ACCESS_DENIED");
+  assert.doesNotMatch(text, new RegExp(backupEnv.AIORNOT_API_KEY));
+  assert.doesNotMatch(text, new RegExp(backupEnv.AIORNOT_API_KEY_BACKUP));
 });

@@ -6,9 +6,9 @@ Verbatim upstream license texts are bundled in [`licenses/`](licenses/), includi
 
 ## Hosted AI or Not service
 
-The Vercel deployment sends text, image bytes, sampled video frames, and 16 kHz voice audio to the commercial AI or Not API through server-side functions. The API key stays server-side. Aright uses the documented `v2/text/sync`, `v2/image/sync?only=ai_generated`, and `v1/reports/voice` endpoints and retains the provider request ID, timestamp, returned score/verdict, model scope, and raw provider response in the downloadable evidence record. Video remains frame-level image screening; the full video is not uploaded. Voice screening is not AI-music detection.
+The Vercel deployment sends text, image bytes, sampled video frames, and 16 kHz voice audio to the commercial AI or Not API through server-side functions. Configured credentials stay server-side. Aright uses the documented `v2/text/sync`, `v2/image/sync?only=ai_generated`, and `v1/reports/voice` endpoints and retains the provider request ID, timestamp, returned score/verdict, model scope, and raw provider response in the downloadable evidence record. Evidence records only the successful runtime slot (primary/backup), attempt count, failover flag, and normalized reason; slot labels do not identify a credential or account, and no key material is exported. Video remains frame-level image screening; the full video is not uploaded. Voice screening is not AI-music detection.
 
-AI or Not states that uploaded content is deleted after inference; its [API documentation](https://docs.aiornot.com/llms.txt), [privacy policy](https://www.aiornot.com/privacy-policy), account terms, and billing govern that remote processing. Provider output is a screening signal and is not a bundled/licensed model artifact. The local launcher described below remains a separate self-hosted option.
+AI or Not states that uploaded content is deleted after inference; its [API documentation](https://docs.aiornot.com/llms.txt), [privacy policy](https://www.aiornot.com/privacy-policy), account terms, and billing govern that remote processing. An eligible credential failover may create a second billable provider attempt. Provider output is a screening signal and is not a bundled/licensed model artifact. The local launcher described below remains a separate self-hosted option.
 
 ## Text
 
@@ -22,7 +22,7 @@ AI or Not states that uploaded content is deleted after inference; its [API docu
 
 ## Image and sampled video frames
 
-In the local launcher, configuring `AIORNOT_API_KEY` calls the commercial AI or Not v2 image API with only the `ai_generated` report and then runs the self-hosted checkpoint below as a comparison. Scores are never averaged; disagreement becomes inconclusive. The evidence export retains the provider request ID, raw provider verdict, both named scores, generator hints, and the decision policy. Optional C2PA data has appeared in live responses but is not documented in the current v2 image schema, so Aright never relies on its presence or absence. The hosted deployment uses the AI or Not signal without bundling the local checkpoint.
+In the local launcher, configuring `AIORNOT_API_KEY` calls the commercial AI or Not v2 image API with only the `ai_generated` report and then runs the self-hosted checkpoint below as a comparison. `AIORNOT_API_KEY_BACKUP` is optional and is used only after primary HTTP 401/402/403. Scores are never averaged; disagreement becomes inconclusive. The evidence export retains the provider request ID, raw provider verdict, both named scores, generator hints, the decision policy, and non-identifying execution metadata. Optional C2PA data has appeared in live responses but is not documented in the current v2 image schema, so Aright never relies on its presence or absence. The hosted deployment uses the AI or Not signal without bundling the local checkpoint.
 
 - Model: `OwensLab/commfor-model-384`
 - Revision: `6076002bf0d9dd37537f965ee2f06f826c333b61`

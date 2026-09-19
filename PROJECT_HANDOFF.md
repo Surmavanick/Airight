@@ -1,8 +1,8 @@
 # Airight — project handoff
 
-Last updated: **2026-09-19**  
+Last updated: **2026-09-20**
 Canonical branch: **`main`**  
-Last verified product-code commit: **`1d6752e`** (`Make analysis results compact and navigable`)
+Verified commit: run `git log -1 --oneline` after `git pull --ff-only`; this handoff is maintained with `main`.
 
 ეს ფაილი არის მოკლე ანამნეზი სახლიდან ან სხვა კომპიუტერიდან სამუშაოს გასაგრძელებლად. ჯერ ეს წაიკითხე, შემდეგ გაუშვი `git status` და `git pull`.
 
@@ -23,6 +23,7 @@ Airight currently includes:
 - local pinned models for text/documents, images and synthetic/cloned speech;
 - deterministic IPR-readiness scoring, prioritized tasks, browser-local register and downloadable JSON evidence;
 - password-gated hosted detector requests and server-side provider credentials;
+- optional server-side AI or Not credential failover for provider HTTP 401/402/403 only, with no automatic retry for 429, timeout, network, 5xx, or invalid input;
 - a compact result workspace with **Findings / Action plan / Review** tabs. The long Action Plan scrolls inside its panel on desktop, so Review no longer requires scrolling through the whole report.
 
 Important product decision: detector scores and IPR readiness stay separate. A detector score is a review signal, never proof of authorship, infringement, ownership or legal protection.
@@ -70,15 +71,16 @@ corepack pnpm dlx vercel env ls
 corepack pnpm dlx vercel --prod --yes
 ```
 
-Use the existing **`airight`** project. Production secrets already belong in Vercel Environment Variables; inspect them but do not overwrite them unless intentionally rotating a credential. Choose one deployment path—GitHub integration or the CLI—so the same commit is not deployed twice.
+Use the existing **`airight`** project. Production secrets already belong in Vercel Environment Variables; inspect them but do not overwrite them unless intentionally rotating a credential. Environment changes affect only new deployments, so redeploy after adding or rotating a credential. Choose one deployment path—GitHub integration or the CLI—so the same commit is not deployed twice.
 
 ## Secrets and data
 
-- `AIORNOT_API_KEY` and `ADMIN_PASSWORD` must exist only in local `.env` and Vercel encrypted environment variables.
+- `AIORNOT_API_KEY`, optional `AIORNOT_API_KEY_BACKUP`, and `ADMIN_PASSWORD` must exist only in local `.env` and Vercel encrypted environment variables.
+- The backup is attempted once only after provider 401/402/403. It is not used for timeouts, network errors, rate limits, invalid input, or provider 5xx responses because the first attempt may already be billable.
 - No credential value is recorded in this handoff or tracked source.
-- Both the provider key and current admin password were previously shared in chat. Treat both as compromised: rotate them out-of-band, update local `.env` and the encrypted Vercel Production values, then redeploy. Never put replacement values in Git, this handoff, or chat.
+- Provider credentials and the current admin password were previously shared in chat. Treat every pasted credential as compromised: rotate it out-of-band, update local `.env` and the encrypted Vercel Production values, then redeploy. Never put replacement values in Git, this handoff, or chat.
 - If the console password is unavailable on the home laptop, reset `ADMIN_PASSWORD` in Vercel rather than storing it in this file.
-- Configure a Vercel WAF rate-limit rule for `/api/detect/*` and keep provider spend alerts/limits enabled. The in-code serverless limiter is only best-effort per instance.
+- Configure a Vercel WAF rate-limit rule for `/api/detect/*` and keep provider spend alerts/limits enabled. The in-code serverless limiter is only best-effort per instance and counts outbound attempts; credential failover can consume two attempts for one detector call.
 - Reports currently live in each browser's `localStorage`. The home laptop will start with an empty register; office-browser records do **not** sync automatically. Download important JSON evidence from the original browser before leaving it.
 - Browser records are editable and unsigned; this is not yet a secure, tamper-evident evidence vault.
 - Before broader publication, confirm distribution rights/consent for `Airight.pdf`, founder portraits and other tracked photography, and strip unnecessary EXIF/location metadata.
@@ -97,11 +99,11 @@ Video is frame-level screening, not full temporal deepfake detection. Audio scre
 
 ## Last verified QA
 
-- Cloud API tests: **16/16 passed**.
+- Cloud API tests include primary/backup routing, fresh multipart bodies, no-retry failures, rate guards, and secret-redaction coverage. Run the tracked command below for the current count.
 - Admin responsive/browser regression: **9/9 passed**.
 - Report workflow passed at **1824×983, 1440×900, 1280×800, 1024×768 and 390×844**.
 - Tested: tab keyboard navigation, task rerenders/focus, internal panel scroll preservation, Review completion/reopen, evidence download, second analysis, no horizontal overflow, and no browser/page errors.
-- Production deployment and the canonical alias were smoke-tested after commit `1d6752e`.
+- Production deployment and the canonical alias must be smoke-tested after every provider/environment change without making an unnecessary paid detector request.
 - The 9/9 browser harness and screenshots currently live under ignored `tmp/`; they will not arrive in a fresh clone. Only `tests/cloud-api.test.mjs` is presently tracked.
 
 Useful tracked check:

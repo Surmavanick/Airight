@@ -123,7 +123,7 @@ const state = {
   previews: new Map(),
   expandedQuotes: new Set(),
   reportTabs: new Map(),
-  server: { online: false, ready: false, deployment: "", provider: "", providers: {}, capabilities: {}, worker: null, authRequired: false, authorized: false },
+  server: { online: false, ready: false, deployment: "", provider: "", providers: {}, providerFailover: {}, capabilities: {}, worker: null, authRequired: false, authorized: false },
   assets: [],
   assetsLoaded: false,
   currentId: null,
@@ -390,6 +390,7 @@ async function checkServer() {
       deployment: String(data.deployment || ""),
       provider: data.provider || "",
       providers: data.providers && typeof data.providers === "object" ? data.providers : {},
+      providerFailover: data.providerFailover && typeof data.providerFailover === "object" ? data.providerFailover : {},
       capabilities: data.capabilities && typeof data.capabilities === "object" ? data.capabilities : {},
       worker: data.worker || null,
       workerError: data.workerError || "",
@@ -403,6 +404,7 @@ async function checkServer() {
       deployment: "",
       provider: "",
       providers: {},
+      providerFailover: {},
       capabilities: {},
       worker: null,
       workerError: error.message || "Connection failed",
@@ -2247,19 +2249,25 @@ function updateCostHint() {
   const externalImage = Boolean(state.server.providers?.image?.configured);
   const cloud = isCloudService();
   const localComparison = state.server.providers?.image?.localComparison !== false;
+  const failoverConfigured = Boolean(
+    state.server.providerFailover?.configured || state.server.providers?.image?.failoverConfigured,
+  );
+  const attemptHint = failoverConfigured
+    ? "normally 1 metered attempt; up to 2 only on credential failover"
+    : "1 metered provider attempt";
   const hints = {
-    text: cloud ? "AI or Not text detector · minimum 250 characters and about 64 words." : "Fakespot / Mozilla RoBERTa · English text · self-hosted.",
+    text: cloud ? `AI or Not text detector · ${attemptHint} · minimum 250 characters and about 64 words.` : "Fakespot / Mozilla RoBERTa · English text · self-hosted.",
     image: externalImage
       ? localComparison
-        ? "AI or Not external check + Community Forensics local comparison · one paid image request."
-        : "AI or Not external image check · one metered provider request · hosted limit 4 MB."
+        ? `AI or Not external check + Community Forensics local comparison · ${attemptHint}.`
+        : `AI or Not external image check · ${attemptHint} · hosted limit 4 MB.`
       : "Community Forensics ViT-384 · local-only because AI or Not is not configured.",
     video: externalImage
-      ? `${els.frameCount.value} sampled frames · each uses AI or Not${localComparison ? " + local comparison" : ""}.`
+      ? `${els.frameCount.value} sampled frames · ${attemptHint} per frame${localComparison ? " + local comparison" : ""}.`
       : `${els.frameCount.value} sampled frames · local Community Forensics only.`,
     audio: cloud
       ? isHostedAudioAvailable()
-        ? `AI or Not voice detector${els.transcriptInput.value.trim() ? " + separate AI or Not script check" : ""} · speech only.`
+        ? `AI or Not voice detector${els.transcriptInput.value.trim() ? " + separate AI or Not script check" : ""} · voice and script are separately metered; ${attemptHint} per call · speech only.`
         : "Hosted audio detection unavailable · use the local Spectra-AASIST3 console."
       : els.transcriptInput.value.trim()
       ? "Spectra-AASIST3 speech screening + separate RoBERTa script screening."

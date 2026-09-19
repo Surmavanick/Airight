@@ -20,6 +20,10 @@ const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 const ML_TIMEOUT_MS = Number(process.env.ML_TIMEOUT_MS) || 10 * 60 * 1000;
 const AIORNOT_API_KEY = String(process.env.AIORNOT_API_KEY || "").trim();
+const AIORNOT_API_KEY_BACKUP_CANDIDATE = String(process.env.AIORNOT_API_KEY_BACKUP || "").trim();
+const AIORNOT_API_KEY_BACKUP = AIORNOT_API_KEY && AIORNOT_API_KEY_BACKUP_CANDIDATE !== AIORNOT_API_KEY
+  ? AIORNOT_API_KEY_BACKUP_CANDIDATE
+  : "";
 const AIORNOT_TIMEOUT_MS = Number(process.env.AIORNOT_TIMEOUT_MS) || 120_000;
 const AIORNOT_MAX_REQUESTS_PER_MINUTE = Math.max(1, Number(process.env.AIORNOT_MAX_REQUESTS_PER_MINUTE) || 12);
 const AIORNOT_MAX_CONCURRENT = Math.max(1, Number(process.env.AIORNOT_MAX_CONCURRENT) || 2);
@@ -218,33 +222,77 @@ function parseAiOrNotImage(payload) {
   };
 }
 
-async function requestAiOrNotImage(bytes, mime, fileName) {
-  if (!AIORNOT_API_KEY) {
-    throw new ProviderError("AI or Not is not configured. Add AIORNOT_API_KEY to .env and restart Aright.", 503, "PROVIDER_NOT_CONFIGURED");
+function sanitizeProviderPayload(value, secrets, depth = 0) {
+  if (depth > 12) return "[truncated]";
+  const secretList = [...new Set(secrets.filter(Boolean))].sort((a, b) => b.length - a.length);
+  if (typeof value === "string") {
+    return secretList.reduce((clean, secret) => clean.replaceAll(secret, "[redacted]"), value);
   }
-  if (bytes.length > AIORNOT_IMAGE_MAX_BYTES) {
-    throw new ProviderError("AI or Not accepts images up to 10 MB in this integration.", 413, "PROVIDER_FILE_TOO_LARGE");
+  if (Array.isArray(value)) return value.map((item) => sanitizeProviderPayload(item, secretList, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  const clean = Object.create(null);
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    if (/^(authorization|api[_-]?key|access[_-]?token|secret)$/i.test(key)) clean[key] = "[redacted]";
+    else clean[key] = sanitizeProviderPayload(item, secretList, depth + 1);
   }
-  if (!AIORNOT_IMAGE_MIME.has(mime)) {
-    throw new ProviderError("AI or Not image checks support JPG, PNG, or WEBP here.", 415, "PROVIDER_MEDIA_TYPE");
-  }
-  const detectedMime = imageMimeFromBytes(bytes);
-  if (!detectedMime || detectedMime !== mime) {
-    throw new ProviderError("The uploaded bytes do not match the declared JPG, PNG, or WEBP type.", 415, "PROVIDER_MEDIA_TYPE");
-  }
+  return clean;
+}
 
+function aiOrNotHttpError(status, payload = {}) {
+  const detail = (() => {
+    try {
+      return JSON.stringify(payload).toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+  const modelDisabled = status === 403 && (
+    /model[^\n]{0,120}disabled/.test(detail) ||
+    /disabled[^\n]{0,120}(model|plan)/.test(detail) ||
+    /plan_version/.test(detail)
+  );
+  const mappedStatus = status === 429 ? 429 : status === 402 ? 402 : status === 413 ? 413 : status === 415 || status === 422 ? 422 : 502;
+  const message = modelDisabled
+    ? "The requested AI or Not detector model is not enabled for this account plan."
+    : status === 401 || status === 403
+    ? "AI or Not rejected the configured provider credentials. Check the server-side keys and account access."
+    : status === 402
+      ? "AI or Not credits are unavailable for this request. Check the provider account balance."
+      : status === 429
+        ? "AI or Not rate limit or credit limit reached. Wait before retrying."
+        : status === 413
+          ? "AI or Not rejected this image as too large."
+          : status === 415 || status === 422
+            ? "AI or Not could not analyze this image format or content."
+            : `AI or Not failed with HTTP ${status}.`;
+  const code = modelDisabled
+    ? "PROVIDER_MODEL_UNAVAILABLE"
+    : status === 401
+    ? "PROVIDER_AUTH_FAILED"
+    : status === 402
+      ? "PROVIDER_CREDITS_UNAVAILABLE"
+      : status === 403
+        ? "PROVIDER_ACCESS_DENIED"
+        : status === 429
+          ? "PROVIDER_RATE_LIMIT"
+          : status === 413
+            ? "PROVIDER_FILE_TOO_LARGE"
+            : status === 415 || status === 422
+              ? "PROVIDER_REJECTED_INPUT"
+              : `PROVIDER_HTTP_${status}`;
+  return new ProviderError(message, mappedStatus, code);
+}
+
+async function requestAiOrNotImageAttempt(bytes, mime, fileName, url, apiKey) {
   const form = new FormData();
   form.append("image", new Blob([bytes], { type: mime }), fileName);
-  const url = new URL(AIORNOT_IMAGE_ENDPOINT);
-  url.searchParams.set("only", "ai_generated");
-  url.searchParams.set("external_id", `aright-${crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 24)}`);
-
   let response;
   const release = reserveAiOrNotRequest();
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${AIORNOT_API_KEY}` },
+      headers: { Authorization: `Bearer ${apiKey}` },
       body: form,
       signal: AbortSignal.timeout(AIORNOT_TIMEOUT_MS),
     });
@@ -260,29 +308,60 @@ async function requestAiOrNotImage(bytes, mime, fileName) {
   }
 
   const text = await response.text();
-  let payload;
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch {
-    throw new ProviderError("AI or Not returned invalid JSON.", 502, "INVALID_PROVIDER_RESPONSE");
+  let parsed = {};
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      if (response.ok) throw new ProviderError("AI or Not returned invalid JSON.", 502, "INVALID_PROVIDER_RESPONSE");
+    }
   }
-  if (!response.ok) {
-    const status = response.status === 429 ? 429 : response.status === 402 ? 402 : response.status === 413 ? 413 : response.status === 415 || response.status === 422 ? 422 : 502;
-    const message = response.status === 401 || response.status === 403
-      ? "AI or Not rejected the configured API key. Replace AIORNOT_API_KEY in .env and restart Aright."
-      : response.status === 402
-        ? "AI or Not credits are unavailable for this request. Check the provider account balance."
-      : response.status === 429
-        ? "AI or Not rate limit or credit limit reached. Wait before retrying."
-        : response.status === 413
-          ? "AI or Not rejected this image as too large."
-          : response.status === 415 || response.status === 422
-            ? "AI or Not could not analyze this image format or content."
-            : `AI or Not failed with HTTP ${response.status}.`;
-    throw new ProviderError(message, status, `AIORNOT_HTTP_${response.status}`);
+  const payload = sanitizeProviderPayload(parsed, [AIORNOT_API_KEY, AIORNOT_API_KEY_BACKUP]);
+  return { response, payload };
+}
+
+async function requestAiOrNotImage(bytes, mime, fileName) {
+  if (!AIORNOT_API_KEY) {
+    throw new ProviderError("AI or Not is not configured. Add AIORNOT_API_KEY to .env and restart Aright.", 503, "PROVIDER_NOT_CONFIGURED");
+  }
+  if (bytes.length > AIORNOT_IMAGE_MAX_BYTES) {
+    throw new ProviderError("AI or Not accepts images up to 10 MB in this integration.", 413, "PROVIDER_FILE_TOO_LARGE");
+  }
+  if (!AIORNOT_IMAGE_MIME.has(mime)) {
+    throw new ProviderError("AI or Not image checks support JPG, PNG, or WEBP here.", 415, "PROVIDER_MEDIA_TYPE");
+  }
+  const detectedMime = imageMimeFromBytes(bytes);
+  if (!detectedMime || detectedMime !== mime) {
+    throw new ProviderError("The uploaded bytes do not match the declared JPG, PNG, or WEBP type.", 415, "PROVIDER_MEDIA_TYPE");
   }
 
-  return { normalized: parseAiOrNotImage(payload), raw: payload };
+  const url = new URL(AIORNOT_IMAGE_ENDPOINT);
+  url.searchParams.set("only", "ai_generated");
+  url.searchParams.set("external_id", `aright-${crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 24)}`);
+
+  const primary = await requestAiOrNotImageAttempt(bytes, mime, fileName, url, AIORNOT_API_KEY);
+  if (primary.response.ok) {
+    return {
+      normalized: parseAiOrNotImage(primary.payload),
+      raw: primary.payload,
+      providerExecution: { credentialSlot: "primary", attemptCount: 1, failoverUsed: false, failoverReason: "" },
+    };
+  }
+
+  if (AIORNOT_API_KEY_BACKUP && [401, 402, 403].includes(primary.response.status)) {
+    const failoverReason = aiOrNotHttpError(primary.response.status, primary.payload).code;
+    const backup = await requestAiOrNotImageAttempt(bytes, mime, fileName, url, AIORNOT_API_KEY_BACKUP);
+    if (backup.response.ok) {
+      return {
+        normalized: parseAiOrNotImage(backup.payload),
+        raw: backup.payload,
+        providerExecution: { credentialSlot: "backup", attemptCount: 2, failoverUsed: true, failoverReason },
+      };
+    }
+    throw aiOrNotHttpError(backup.response.status, backup.payload);
+  }
+
+  throw aiOrNotHttpError(primary.response.status, primary.payload);
 }
 
 function combineImageSignals(aiOrNot, local) {
@@ -353,11 +432,15 @@ class PersistentMlWorker {
     if (this.child && !this.child.killed) return;
     if (!fs.existsSync(WORKER_PATH)) throw new Error("ml_worker.py is missing.");
 
+    const workerEnv = { ...process.env, PYTHONIOENCODING: "utf-8" };
+    delete workerEnv.ADMIN_PASSWORD;
+    delete workerEnv.AIORNOT_API_KEY;
+    delete workerEnv.AIORNOT_API_KEY_BACKUP;
     const child = spawn(PYTHON, ["-u", WORKER_PATH], {
       cwd: ROOT,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+      env: workerEnv,
     });
     this.child = child;
     this.lastError = "";
@@ -462,6 +545,7 @@ async function handleApi(req, res, pathname) {
         image: {
           primary: AIORNOT_API_KEY ? "AI or Not v2" : "Community Forensics",
           configured: Boolean(AIORNOT_API_KEY),
+          failoverConfigured: Boolean(AIORNOT_API_KEY_BACKUP),
           localComparison: true,
           remoteProcessing: Boolean(AIORNOT_API_KEY),
           costGuard: AIORNOT_API_KEY ? {
@@ -531,6 +615,7 @@ async function handleApi(req, res, pathname) {
           modality: "image",
           analyzedAt: new Date().toISOString(),
           decisionPolicy: result.model.policy,
+          providerExecution: providerResult.providerExecution,
           aiOrNot: providerResult.raw,
           local: localResult,
         },
