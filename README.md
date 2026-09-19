@@ -2,6 +2,8 @@
 
 Marketing website plus the Aright Console for real AI-content screening, IPR readiness, action plans, and evidence records. The workflow follows `Airight.pdf`: analysis and scoring → action plan → review and evidence. It has two runtimes: an AI or Not–backed Vercel deployment and a local launcher with pinned open models.
 
+Resuming this project from another computer? Start with [`PROJECT_HANDOFF.md`](PROJECT_HANDOFF.md).
+
 ## Hosted console on Vercel
 
 The production deployment is a static site plus zero-dependency Node functions in `api/`. Set these encrypted project environment variables in Vercel before deploying:
