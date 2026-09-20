@@ -11,6 +11,7 @@ const HASH_LIMIT = 250 * MB;
 const STORED_TEXT_LIMIT = 60000;
 const QUOTES_VISIBLE = 5;
 const AUDIO_MAX_SECONDS = 60.5;
+const HUMAN_TARGET_PCT = 51;
 const requestedApiPort = Number(new URLSearchParams(location.search).get("apiPort"));
 const fileApiPort = Number.isInteger(requestedApiPort) && requestedApiPort > 0 && requestedApiPort <= 65535 ? requestedApiPort : 8000;
 const API_BASE = location.protocol === "file:" ? `http://127.0.0.1:${fileApiPort}` : "";
@@ -22,8 +23,8 @@ const FILE_RULES = {
   audio: { max: 50 * MB, exts: ["mp3", "wav", "m4a", "ogg", "flac", "aac"], mimePrefix: "audio/", label: "an MP3, WAV, M4A, OGG or FLAC file" },
 };
 
-const TYPE_LABEL = { text: "Text", image: "Image", video: "Video", audio: "Audio" };
-const TYPE_ICON = { text: "i-text", image: "i-image", video: "i-video", audio: "i-audio" };
+const TYPE_LABEL = { text: "Text", image: "Image", video: "Video", audio: "Audio", code: "Code" };
+const TYPE_ICON = { text: "i-text", image: "i-image", video: "i-video", audio: "i-audio", code: "i-code" };
 const SLOT_ICON = { doc: "i-text", image: "i-image", video: "i-video", audio: "i-audio" };
 
 const HUMAN = {
@@ -73,6 +74,7 @@ const els = {
   typeButtons: $$(".types__btn"),
   panes: $$(".pane"),
   textInput: $("#textInput"),
+  repoUrl: $("#repoUrl"),
   charCount: $("#charCount"),
   transcriptInput: $("#transcriptInput"),
   audioAvailabilityBadge: $("#audioAvailabilityBadge"),
@@ -155,6 +157,39 @@ function toNumber(value) {
   return null;
 }
 
+function normalizeCodeRepository(value) {
+  if (!value || typeof value !== "object" || typeof value.url !== "string" || typeof value.fullName !== "string") return null;
+  return {
+    id: toNumber(value.id),
+    fullName: value.fullName.slice(0, 220),
+    url: value.url.slice(0, 400),
+    defaultBranch: String(value.defaultBranch || "").slice(0, 220),
+    treeSha: String(value.treeSha || "").slice(0, 100),
+    fingerprint: String(value.fingerprint || "").slice(0, 128),
+    archived: Boolean(value.archived),
+    fork: Boolean(value.fork),
+    license: String(value.license || "NOASSERTION").slice(0, 80),
+    sourceFiles: Math.max(0, Math.round(toNumber(value.sourceFiles) || 0)),
+    sourceBytes: Math.max(0, Math.round(toNumber(value.sourceBytes) || 0)),
+    estimatedLines: Math.max(1, Math.round(toNumber(value.estimatedLines) || 1)),
+    treeTruncated: Boolean(value.treeTruncated),
+    sampledFileCount: Math.max(0, Math.round(toNumber(value.sampledFileCount) || 0)),
+    sampledBytes: Math.max(0, Math.round(toNumber(value.sampledBytes) || 0)),
+    sampledFiles: Array.isArray(value.sampledFiles) ? value.sampledFiles.slice(0, 20).map((item) => ({
+      path: String(item?.path || "Unknown file").slice(0, 500),
+      language: String(item?.language || "Code").slice(0, 80),
+      size: Math.max(0, Math.round(toNumber(item?.size) || 0)),
+      lines: Math.max(0, Math.round(toNumber(item?.lines) || 0)),
+    })) : [],
+    languages: Array.isArray(value.languages) ? value.languages.slice(0, 12).map((item) => ({
+      language: String(item?.language || "Other").slice(0, 80),
+      files: Math.max(0, Math.round(toNumber(item?.files) || 0)),
+      bytes: Math.max(0, Math.round(toNumber(item?.bytes) || 0)),
+    })) : [],
+    warnings: Array.isArray(value.warnings) ? value.warnings.slice(0, 8).map((item) => String(item).slice(0, 500)) : [],
+  };
+}
+
 function extOf(name) {
   const dot = name.lastIndexOf(".");
   return dot === -1 ? "" : name.slice(dot + 1).toLowerCase();
@@ -201,7 +236,7 @@ const iprTone = (score) => (score >= 80 ? "ok" : score >= 55 ? "mid" : "low");
 
 /* ---------- Storage ---------- */
 function normalizeStoredRecord(value) {
-  if (!value || typeof value !== "object" || !["text", "image", "video", "audio"].includes(value.type) || !value.detection || typeof value.detection !== "object") return null;
+  if (!value || typeof value !== "object" || !["text", "image", "video", "audio", "code"].includes(value.type) || !value.detection || typeof value.detection !== "object") return null;
   const detection = {
     ...value.detection,
     flagged: Array.isArray(value.detection.flagged) ? value.detection.flagged.filter((item) => typeof item === "string") : [],
@@ -216,12 +251,13 @@ function normalizeStoredRecord(value) {
       segments: Array.isArray(detection.transcript.segments) ? detection.transcript.segments : [],
     };
   }
+  const seenTaskIds = new Set();
   const savedTasks = Array.isArray(value.tasks)
     ? value.tasks
         .filter((task) => task && typeof task === "object")
         .map((task, index) => ({
           ...task,
-          id: String(task.id || `saved-task-${index + 1}`),
+          id: String(task.id || `saved-task-${index + 1}`).replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 100),
           priority: Object.hasOwn(PRIORITY_ORDER, task.priority) ? task.priority : "high",
           short: String(task.short || task.title || "Review this saved record"),
           title: String(task.title || task.short || "Review this saved record"),
@@ -229,9 +265,10 @@ function normalizeStoredRecord(value) {
           done: Boolean(task.done),
           quotes: Array.isArray(task.quotes) ? task.quotes.filter((item) => typeof item === "string") : [],
         }))
+        .filter((task) => task.id && !seenTaskIds.has(task.id) && seenTaskIds.add(task.id))
     : [];
   const needsLegacyReview = !Array.isArray(value.tasks) || (value.tasks.length > 0 && savedTasks.length === 0);
-  const tasks = needsLegacyReview
+  let tasks = needsLegacyReview
     ? [{
         id: "legacy-review",
         priority: "high",
@@ -242,7 +279,14 @@ function normalizeStoredRecord(value) {
         quotes: [],
       }]
     : savedTasks;
-  const fileBacked = value.type !== "text" || value.source === "document";
+  const fileBacked = ["image", "video", "audio"].includes(value.type) || value.source === "document";
+  const repository = value.type === "code" ? normalizeCodeRepository(value.repository || detection.repository) : value.repository || null;
+  if (value.type === "code") {
+    if (!repository) return null;
+    detection.repository = repository;
+  }
+  const targetTask = humanTargetTask(value.type, humanTargetPlan(value.type, detection, { repository }));
+  if (targetTask && !tasks.some((task) => task.id === "human-51")) tasks = [targetTask, ...tasks];
   return {
     ...value,
     id: String(value.id || newId()),
@@ -251,6 +295,7 @@ function normalizeStoredRecord(value) {
     details: value.details && typeof value.details === "object" ? value.details : {},
     tasks,
     detection,
+    repository,
     file: fileBacked ? { name: String(value.file?.name || value.name || "Saved asset"), size: Number(value.file?.size) || 0, mime: String(value.file?.mime || "") } : value.file || null,
     protectedAt: needsLegacyReview ? null : value.protectedAt || null,
   };
@@ -588,6 +633,34 @@ function normalizeTextResult(data, sourceText = "") {
   };
 }
 
+function normalizeCodeResult(data) {
+  const d = data && typeof data === "object" ? data : {};
+  const repository = normalizeCodeRepository(d.repository);
+  const composition = Array.isArray(d.composition)
+    ? d.composition
+        .filter((item) => item && typeof item === "object")
+        .map((item) => ({ id: String(item.id || "other"), label: String(item.label || "Other"), pct: Math.round(clamp(toNumber(item.pct) ?? 0, 0, 100)) }))
+    : [];
+  const compositionTotal = composition.reduce((sum, item) => sum + item.pct, 0);
+  const humanPct = toNumber(d.humanPct) ?? composition.find((item) => item.id === "human")?.pct;
+  const aiPct = toNumber(d.aiPct);
+  if (!repository?.url || !repository?.fullName || !composition.length || compositionTotal !== 100 || humanPct == null || aiPct == null) {
+    throw new ApiError("The GitHub importer returned an incomplete repository estimate.", 502, data);
+  }
+  return {
+    checked: true,
+    aiPct: round1(clamp(aiPct, 0, 100)),
+    humanPct: round1(clamp(humanPct, 0, 100)),
+    verdict: String(d.verdict || "Illustrative repository contribution estimate"),
+    policyVerdict: String(d.policyVerdict || "inconclusive"),
+    composition,
+    humanPlan: d.humanPlan && typeof d.humanPlan === "object" ? d.humanPlan : null,
+    repository,
+    model: d.model || null,
+    semantics: String(d.semantics || "Deterministic illustrative estimate; not forensic authorship attribution."),
+  };
+}
+
 // Keep a tolerant normalizer so the UI can also consume optional commercial providers.
 const AI_PCT_KEYS = ["fakePercentage", "ai_probability", "aiProbability", "ai_percentage", "aiPercentage", "ai_score", "aiScore", "result", "probability", "score"];
 const LABEL_KEYS = ["final_result", "finalResult", "label", "verdict", "prediction", "feedback"];
@@ -871,15 +944,16 @@ function effectiveDetails(record) {
 function scoreOf(record) {
   const details = effectiveDetails(record);
   const ai = record.detection.aiPct;
+  const illustrativeCode = record.type === "code";
   const policy = record.detection.policyVerdict || (ai == null ? "" : ai >= 75 ? "likely_ai" : ai <= 25 ? "likely_human" : "inconclusive");
   const human = HUMAN[details.human] || HUMAN.light;
   const license = LICENSE[details.license] || LICENSE.unsure;
-  const screeningPoints = { likely_human: 45, inconclusive: 22, likely_ai: 0 }[policy];
+  const screeningPoints = illustrativeCode ? null : { likely_human: 45, inconclusive: 22, likely_ai: 0 }[policy];
   const parts = [
     {
       label: "Content screening factor",
-      note: ai == null ? "not measured" : `${round1(ai)}% model score · ${policy.replaceAll("_", " ")}`,
-      value: ai == null ? null : screeningPoints,
+      note: illustrativeCode ? "illustrative code mix excluded from IPR score" : ai == null ? "not measured" : `${round1(ai)}% model score · ${policy.replaceAll("_", " ")}`,
+      value: ai == null || illustrativeCode ? null : screeningPoints,
       max: 45,
     },
     { label: "Declared human contribution", note: human.label, value: human.points, max: 20 },
@@ -887,8 +961,8 @@ function scoreOf(record) {
     { label: "Licence clarity", note: license.label, value: license.points, max: 20 },
   ];
   const declared = parts.slice(1).reduce((sum, part) => sum + part.value, 0);
-  const total = ai == null ? Math.min(60, Math.round((declared / 55) * 100)) : parts[0].value + declared;
-  return { total, parts, capped: ai == null };
+  const total = ai == null || illustrativeCode ? Math.min(60, Math.round((declared / 55) * 100)) : parts[0].value + declared;
+  return { total, parts, capped: ai == null || illustrativeCode };
 }
 
 function statusOf(record) {
@@ -910,22 +984,151 @@ function nextAction(record) {
   return openTasks(record)[0].short;
 }
 
+function humanTargetPlan(type, detection, context = {}) {
+  if (!detection || detection.aiPct == null) return null;
+  if (type === "code") {
+    const supplied = detection.humanPlan && typeof detection.humanPlan === "object" ? detection.humanPlan : {};
+    const repository = context.repository || detection.repository || {};
+    const baselineHumanPct = round1(clamp(
+      toNumber(supplied.baselineHumanPct) ?? toNumber(detection.humanPct) ?? toNumber(detection.composition?.find((item) => item.id === "human")?.pct) ?? 0,
+      0,
+      100,
+    ));
+    const estimatedTotalLines = Math.max(1, Math.floor(toNumber(supplied.estimatedTotalLines) ?? toNumber(repository.estimatedLines) ?? 1));
+    const sourceFiles = Math.max(1, Math.floor(toNumber(repository.sourceFiles) ?? 1));
+    const humanLines = Math.floor(estimatedTotalLines * baselineHumanPct / 100);
+    const targetNumeratorGap = Math.max(0, HUMAN_TARGET_PCT * estimatedTotalLines - 100 * humanLines);
+    const rewriteLines = Math.ceil(targetNumeratorGap / 100);
+    const addOnlyLines = Math.ceil(targetNumeratorGap / (100 - HUMAN_TARGET_PCT));
+    const filesToRewrite = rewriteLines ? Math.min(sourceFiles, Math.max(1, Math.ceil(rewriteLines / 200))) : 0;
+    const testsToWrite = rewriteLines ? Math.max(3, Math.ceil(filesToRewrite * 2), Math.ceil(rewriteLines / 150)) : 0;
+    return {
+      baselineHumanPct,
+      targetHumanPct: HUMAN_TARGET_PCT,
+      gapPct: round1(Math.max(0, HUMAN_TARGET_PCT - baselineHumanPct)),
+      estimatedTotalLines,
+      rewriteLines,
+      addOnlyLines,
+      filesToRewrite,
+      testsToWrite,
+      unit: "lines",
+      method: "URL-seeded illustrative repository mix",
+      proxy: true,
+    };
+  }
+
+  const explicitImageHuman = type === "image"
+    ? toNumber(detection.providerSignals?.find((signal) => signal.name === "AI or Not" && toNumber(signal.humanPct) != null)?.humanPct)
+    : null;
+  const baselineHumanPct = round1(clamp(explicitImageHuman ?? 100 - detection.aiPct, 0, 100));
+  const gapPct = round1(Math.max(0, HUMAN_TARGET_PCT - baselineHumanPct));
+  const base = {
+    baselineHumanPct,
+    targetHumanPct: HUMAN_TARGET_PCT,
+    gapPct,
+    proxy: true,
+    method: "planning proxy derived from the detector signal; not measured authorship share",
+  };
+
+  if (type === "text") {
+    const words = Math.max(1, Math.round(detection.textWords || detection.text?.trim().split(/\s+/).filter(Boolean).length || 1));
+    const existingHumanWords = Math.floor(words * baselineHumanPct / 100);
+    const deficit = Math.max(0, HUMAN_TARGET_PCT / 100 * words - existingHumanWords);
+    return { ...base, unit: "words", totalUnits: words, rewriteUnits: Math.ceil(deficit), addOnlyUnits: Math.ceil(deficit / 0.49) };
+  }
+  if (type === "image") {
+    return { ...base, unit: "substantive edit categories", rewriteUnits: gapPct ? clamp(Math.ceil(gapPct / 10), 1, 5) : 0, addOnlyUnits: null };
+  }
+  if (type === "video") {
+    const moments = Math.max(1, detection.coverage?.scored || detection.frames?.filter((frame) => frame.aiPct != null).length || 1);
+    return { ...base, unit: "sampled shots", totalUnits: moments, rewriteUnits: gapPct ? Math.max(1, Math.ceil(moments * gapPct / 100)) : 0, addOnlyUnits: null };
+  }
+  if (type === "audio") {
+    const seconds = Math.max(1, Math.round(detection.decode?.analyzedSeconds || detection.duration || context.duration || 1));
+    return { ...base, unit: "seconds", totalUnits: seconds, rewriteUnits: gapPct ? Math.max(1, Math.ceil(seconds * gapPct / 100)) : 0, addOnlyUnits: null };
+  }
+  return base;
+}
+
+function humanTargetTask(type, plan) {
+  if (!plan || plan.gapPct <= 0) return null;
+  if (type === "code") {
+    return {
+      id: "human-51",
+      priority: "high",
+      short: `Hand-write ${plural(plan.rewriteLines, "line")}`,
+      title: `Raise evidenced Human contribution to ${HUMAN_TARGET_PCT}%`,
+      detail: `Manually rewrite at least ${plan.rewriteLines.toLocaleString()} substantive existing lines across ${plural(plan.filesToRewrite, "core file")} without AI autocomplete. Prioritize business rules, validation and error paths, security/permissions and integration boundaries. Formatting, renames and comments do not count. If you only add code, add at least ${plan.addOnlyLines.toLocaleString()} original lines. Also write ${plural(plan.testsToWrite, "behavior test")} and retain reviewed commits/diffs and one design note. This is a planning target, not proof of authorship.`,
+      humanDeltaPct: plan.gapPct,
+      target: plan,
+    };
+  }
+  if (type === "text") {
+    return {
+      id: "human-51",
+      priority: plan.gapPct >= 20 ? "high" : "medium",
+      short: `Rewrite ${plural(plan.rewriteUnits, "word")}`,
+      title: `Build a traceable ${HUMAN_TARGET_PCT}% Human contribution`,
+      detail: `Rewrite at least ${plan.rewriteUnits.toLocaleString()} existing words in your own structure, starting with every flagged passage; or add at least ${plan.addOnlyUnits.toLocaleString()} original words. Use your own examples, data and citations, and retain tracked changes. The percentage is a planning proxy, not detected authorship.`,
+      humanDeltaPct: plan.gapPct,
+      target: plan,
+    };
+  }
+  if (type === "image") {
+    const edits = ["redraw the focal subject", "replace the background or texture with owned material", "rebuild composition and masks manually", "set typography by hand", "manually rebalance color and light"];
+    return {
+      id: "human-51",
+      priority: "high",
+      short: `Make ${plural(plan.rewriteUnits, "substantive edit")}`,
+      title: `Create a traceable Human-majority image process`,
+      detail: `Complete at least ${plan.rewriteUnits} substantive edit ${plan.rewriteUnits === 1 ? "category" : "categories"}: ${edits.slice(0, plan.rewriteUnits).join("; ")}. Save the layered source file, before/after exports and references. Image pixels do not support a defensible 51% authorship calculation, so this is a self-attested process target—not a detector promise.`,
+      humanDeltaPct: plan.gapPct,
+      target: plan,
+    };
+  }
+  if (type === "video") {
+    return {
+      id: "human-51",
+      priority: "high",
+      short: `Rework ${plural(plan.rewriteUnits, "sampled shot")}`,
+      title: `Raise the Human contribution across sampled shots`,
+      detail: `Reshoot or substantially recompose at least ${plan.rewriteUnits} of ${plan.totalUnits} successfully screened sampled shots, prioritizing flagged timestamps. Keep the edit project, original footage and change notes. Frame sampling cannot measure the whole video's authorship, so 51% is a documented planning target.`,
+      humanDeltaPct: plan.gapPct,
+      target: plan,
+    };
+  }
+  return {
+    id: "human-51",
+    priority: "high",
+    short: `Re-record ${plural(plan.rewriteUnits, "second")}`,
+    title: `Create a traceable Human-majority audio process`,
+    detail: `Re-record, arrange or manually edit at least ${plan.rewriteUnits} of ${plan.totalUnits} screened seconds with a real performance or deliberate production work. Save stems, the DAW session and before/after exports. The speech detector does not measure musical authorship; 51% is a planning target.`,
+    humanDeltaPct: plan.gapPct,
+    target: plan,
+  };
+}
+
 const PROVENANCE_TASK = {
   text: ["Save your drafts and the prompts you used", "Keep version history (Google Docs, tracked changes) and the prompt log. They are supporting evidence of your team's human contribution, not proof by themselves."],
   image: ["Save the prompt, model version, seed and source files", "Store them with the layered file. Together they show how the image was made and which parts are your own work."],
   video: ["Save the prompts, model versions and edit project", "The edit project file and generation settings show which shots were generated and what your team cut, composited and graded."],
   audio: ["Save the prompts, stems and DAW session", "Stems and the session file show your arrangement and mixing. That's the human part of the track."],
+  code: ["Save prompts, reviewed commits and source references", "Keep prompt/model logs, design notes, reviewed diffs and dependency licences. They support the repository's provenance but do not prove model authorship."],
 };
 
-function buildTasks(type, detection, details) {
+function buildTasks(type, detection, details, context = {}) {
   const tasks = [];
   const add = (task) => tasks.push({ done: false, quotes: [], ...task });
   const ai = detection.aiPct;
   const tool = details.tool || "the AI tool";
   const commercial = details.use !== "internal";
   const lowHuman = details.human === "none" || details.human === "light";
+  const targetPlan = humanTargetPlan(type, detection, context);
+  const targetTask = humanTargetTask(type, targetPlan);
+  if (targetTask) add(targetTask);
+  const targetEntry = targetTask ? tasks.find((task) => task.id === "human-51") : null;
 
-  if (ai != null && ai >= 75 && details.human === "human") {
+  if (type !== "code" && ai != null && ai >= 75 && details.human === "human") {
     add({
       id: "conflict",
       priority: "high",
@@ -941,24 +1144,33 @@ function buildTasks(type, detection, details) {
     const writingAi = writing.aiPct;
     const n = writing.flaggedTotal ?? writing.flagged?.length ?? 0;
     if (n) {
-      add({
-        id: "rewrite",
-        priority: writingAi >= 75 ? "high" : "medium",
-        short: `Rewrite ${plural(n, noun)}`,
-        title: `Review the ${plural(n, noun)} with high text-model scores`,
-        detail: "Rewrite from source material in your own structure, add verifiable specifics, and preserve the edit history. The model score alone is not an authorship decision.",
-        quotes: writing.flagged,
-      });
+      if (type === "text" && targetEntry) {
+        targetEntry.quotes = writing.flagged || [];
+        targetEntry.detail += ` Start with the ${plural(n, noun)} returned as high-score passages.`;
+      } else {
+        add({
+          id: "rewrite",
+          priority: writingAi >= 75 ? "high" : "medium",
+          short: `Rewrite ${plural(n, noun)}`,
+          title: `Review the ${plural(n, noun)} with high text-model scores`,
+          detail: "Rewrite from source material in your own structure, add verifiable specifics, and preserve the edit history. The model score alone is not an authorship decision.",
+          quotes: writing.flagged,
+        });
+      }
     } else if (writingAi >= 25) {
-      add({
-        id: "rewrite",
-        priority: writingAi >= 75 ? "high" : "medium",
-        short: "Rework AI-sounding passages",
-        title: `Review passages behind the ${writingAi}% AI-class model score`,
-        detail: "The document-level classifier is inconclusive or elevated. Review the source trail and document any substantive human rewrite.",
-      });
+      if (type === "text" && targetEntry) {
+        targetEntry.detail += ` Prioritize the passages behind the ${writingAi}% AI-class model score.`;
+      } else {
+        add({
+          id: "rewrite",
+          priority: writingAi >= 75 ? "high" : "medium",
+          short: "Rework AI-sounding passages",
+          title: `Review passages behind the ${writingAi}% AI-class model score`,
+          detail: "The document-level classifier is inconclusive or elevated. Review the source trail and document any substantive human rewrite.",
+        });
+      }
     }
-    if (writingAi >= 25 && lowHuman) {
+    if (writingAi >= 25 && lowHuman && !targetTask) {
       add({
         id: "human-layer",
         priority: "medium",
@@ -1023,7 +1235,7 @@ function buildTasks(type, detection, details) {
   }
 
   if (type === "image") {
-    if (ai >= 75) {
+    if (ai >= 75 && !targetTask) {
       add({
         id: "human-work",
         priority: "high",
@@ -1031,7 +1243,7 @@ function buildTasks(type, detection, details) {
         title: "Add documented human creative work before you rely on it",
         detail: `The external image check returned a ${ai}% AI-class score. This is not proof that the image is AI-generated. Keep layered source files, references, prompts, licences and meaningful human edits for review.`,
       });
-    } else if (ai >= 25) {
+    } else if (ai >= 25 && !targetTask) {
       add({
         id: "human-work",
         priority: "medium",
@@ -1081,22 +1293,31 @@ function buildTasks(type, detection, details) {
     }
     const flagged = detection.frames.filter((frame) => frame.aiPct != null && (frame.policyVerdict ? frame.policyVerdict === "likely_ai" : frame.aiPct >= 75));
     if (flagged.length) {
-      add({
-        id: "frames",
-        priority: "high",
-        short: `Rework ${plural(flagged.length, "shot")}`,
-        title: `Rework the ${plural(flagged.length, "shot")} flagged as AI-generated`,
-        detail: "Replace them with original footage, or document the human editing, compositing and grading on those shots.",
-        quotes: flagged.map((frame) => `${formatTime(frame.time)}: ${frame.aiPct}% synthetic-image model score`),
-      });
+      if (targetEntry) {
+        const required = Math.max(targetPlan.rewriteUnits, flagged.length);
+        targetEntry.short = `Rework ${plural(required, "sampled shot")}`;
+        targetEntry.title = "Raise the Human contribution across the flagged shots";
+        targetEntry.detail = `Reshoot or substantially recompose at least ${required} of ${targetPlan.totalUnits} successfully screened sampled shots, including every flagged timestamp. Keep the edit project, original footage and change notes. Frame sampling cannot measure the whole video's authorship, so 51% is a documented planning target.`;
+        targetEntry.quotes = flagged.map((frame) => `${formatTime(frame.time)}: ${frame.aiPct}% synthetic-image model score`);
+      } else {
+        add({
+          id: "frames",
+          priority: "high",
+          short: `Rework ${plural(flagged.length, "shot")}`,
+          title: `Rework the ${plural(flagged.length, "shot")} flagged as AI-generated`,
+          detail: "Replace them with original footage, or document the human editing, compositing and grading on those shots.",
+          quotes: flagged.map((frame) => `${formatTime(frame.time)}: ${frame.aiPct}% synthetic-image model score`),
+        });
+      }
     } else if (ai >= 25) {
-      add({
-        id: "frames",
-        priority: "medium",
-        short: "Document your edit",
-        title: "Document how the video was edited",
-        detail: "Some frames show AI traits. Keep the edit project and export notes that show your cut, compositing and grading.",
-      });
+      if (targetEntry) targetEntry.detail += " Prioritize the sampled shots with the strongest AI traits.";
+      else add({
+          id: "frames",
+          priority: "medium",
+          short: "Document your edit",
+          title: "Document how the video was edited",
+          detail: "Some frames show AI traits. Keep the edit project and export notes that show your cut, compositing and grading.",
+        });
     }
     add({
       id: "soundtrack",
@@ -1114,6 +1335,16 @@ function buildTasks(type, detection, details) {
         detail: "Blur or remove recognizable faces, brands or characters unless you have a release or licence.",
       });
     }
+  }
+
+  if (type === "code" && targetPlan?.gapPct > 0) {
+    add({
+      id: "code-review",
+      priority: "medium",
+      short: "Review core code manually",
+      title: "Review the hand-written core as a human-owned change set",
+      detail: `Have a named reviewer inspect the ${plural(targetPlan.filesToRewrite, "core file")} and ${plural(targetPlan.testsToWrite, "behavior test")}. Record the architecture decision, security assumptions, dependency licences and approval commit. Do not count generated/vendor code, lockfiles, whitespace, comments or mechanical renames toward the target.`,
+    });
   }
 
   if (!details.provenance) {
@@ -1161,7 +1392,12 @@ function modelLabel(record) {
 function automatedSteps(record) {
   const { detection } = record;
   const steps = [];
-  if (record.type === "video") {
+  if (record.type === "code") {
+    const repository = record.repository || detection.repository || {};
+    steps.push(`Imported the public GitHub tree for ${repository.fullName || record.name}`);
+    steps.push(`Sampled ${plural(repository.sampledFileCount || repository.sampledFiles?.length || 0, "source file")} without executing or storing repository source`);
+    steps.push(`Created a stable URL-seeded illustrative mix with ${modelLabel(record)}`);
+  } else if (record.type === "video") {
     const scanned = detection.frames.filter((frame) => frame.aiPct != null).length;
     steps.push(`Sampled ${plural(detection.frames.length, "frame")} and scored ${scanned} with ${modelLabel(record)}`);
   } else if (detection.checked) {
@@ -1175,7 +1411,7 @@ function automatedSteps(record) {
   }
   if (detection.flagged?.length) steps.push(`Recorded ${plural(detection.flagged.length, "passage")} with high text-model scores`);
   if (detection.transcript?.flagged?.length) steps.push(`Recorded ${plural(detection.transcript.flagged.length, "script passage")} with high text-model scores`);
-  steps.push(record.fingerprint ? "Fingerprinted the original with SHA-256" : "Recorded the original's details (fingerprint not available in this browser)");
+  steps.push(record.fingerprint ? (record.type === "code" ? "Fingerprint-bound the repository identity and imported tree" : "Fingerprinted the original with SHA-256") : "Recorded the original's details (fingerprint not available in this browser)");
   steps.push("Calculated the IPR score and added the asset to the register");
   if (record.raw) steps.push("Saved the versioned model record in the evidence vault");
   return steps;
@@ -1190,6 +1426,23 @@ function readDetails() {
     license: els.licenseInput.value,
     provenance: els.provenanceInput.checked,
   };
+}
+
+function parseGithubRootInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /%2f|%5c/i.test(raw)) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" || !["github.com", "www.github.com"].includes(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length !== 2) return null;
+    const owner = decodeURIComponent(parts[0]);
+    const repo = decodeURIComponent(parts[1]).replace(/\.git$/i, "");
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(owner) || !/^[A-Za-z0-9._-]{1,100}$/.test(repo)) return null;
+    return { owner, repo, url: `https://github.com/${owner}/${repo}` };
+  } catch {
+    return null;
+  }
 }
 
 function missingInput(type) {
@@ -1210,11 +1463,18 @@ function missingInput(type) {
     const words = transcript.split(/\s+/).length;
     if (transcript.length < 250 || words < 64) return "The optional script needs at least 250 characters and about 64 words, or leave it empty.";
   }
+  if (type === "code" && !parseGithubRootInput(els.repoUrl.value)) {
+    return "Enter a public repository root URL such as https://github.com/owner/repository.";
+  }
   return "";
 }
 
 function defaultName(type, file, text) {
   if (file) return baseName(file.name);
+  if (type === "code") {
+    const repository = parseGithubRootInput(text);
+    return repository ? `${repository.owner}/${repository.repo}` : "GitHub repository";
+  }
   const words = text.trim().split(/\s+/).slice(0, 6).join(" ");
   return words ? `${words}…` : `${TYPE_LABEL[type]} asset`;
 }
@@ -1326,6 +1586,22 @@ async function analyze(type) {
     };
   }
 
+  if (type === "code") {
+    const repository = parseGithubRootInput(els.repoUrl.value);
+    setLoading(`Importing ${repository.owner}/${repository.repo} from GitHub…`);
+    const response = await postDetect("github", JSON.stringify({ repositoryUrl: repository.url }), { "Content-Type": "application/json" });
+    setLoading("Building the stable repository mix and 51% Human plan…");
+    const detection = normalizeCodeResult(response.data);
+    return {
+      source: "github",
+      file: null,
+      fingerprint: detection.repository.fingerprint || "",
+      raw: response.raw,
+      detection,
+      repository: detection.repository,
+    };
+  }
+
   const file = state.files.audio;
   if (isCloudService() && !isHostedAudioAvailable()) {
     throw new ApiError("Hosted audio detection is unavailable. Use the local Spectra-AASIST3 console for speech screening.", 503);
@@ -1373,9 +1649,10 @@ async function runAnalysis() {
   els.intakeError.textContent = "";
 
   const details = readDetails();
+  const namingInput = type === "audio" ? els.transcriptInput.value : type === "code" ? els.repoUrl.value : els.textInput.value;
   const name =
     els.assetName.value.trim() ||
-    defaultName(type, state.files[type === "text" ? "doc" : type], type === "audio" ? els.transcriptInput.value : els.textInput.value);
+    defaultName(type, state.files[type === "text" ? "doc" : type], namingInput);
 
   setBusy(true);
   try {
@@ -1391,7 +1668,8 @@ async function runAnalysis() {
       fingerprint: result.fingerprint,
       detection: result.detection,
       raw: compactRawRecord(result.raw),
-      tasks: buildTasks(type, result.detection, details),
+      repository: result.repository || null,
+      tasks: buildTasks(type, result.detection, details, { repository: result.repository || null, file: result.file || null }),
       protectedAt: null,
     };
     if (result.preview) {
@@ -1500,11 +1778,14 @@ function riskHeadline(score) {
 
 function summaryCard(record, score, status, animate) {
   const ai = record.detection.aiPct;
+  const codeEstimate = record.type === "code";
   const externalSignal = usesAiOrNot(record.detection);
   const hasExternalImageSignal = record.type === "image" && record.detection.providerSignals?.some((signal) => signal.name === "AI or Not");
-  const meterLabel = externalSignal ? `AI or Not ${record.type === "audio" ? "voice" : record.type === "video" ? "frame" : record.type} signal` : `${TYPE_LABEL[record.type]} model score`;
+  const meterLabel = codeEstimate ? "Estimated AI-assisted share" : externalSignal ? `AI or Not ${record.type === "audio" ? "voice" : record.type === "video" ? "frame" : record.type} signal` : `${TYPE_LABEL[record.type]} model score`;
   const aiNote =
-    ai == null
+    codeEstimate
+      ? "Stable repository-ID-seeded demo mix; not code authorship detection or proof of which model was used."
+      : ai == null
       ? "No content model score is available for this legacy record."
       : record.type === "video"
         ? `${record.detection.aggregation || `Median across ${plural(record.detection.frames.filter((f) => f.aiPct != null).length, "scanned frame")}`}.`
@@ -1536,7 +1817,7 @@ function summaryCard(record, score, status, animate) {
 
   const notices = [
     score.capped
-      ? `<p class="callout">${icon("i-alert")}<span>No content signal is available for this asset, so readiness is capped until the script and supporting evidence are reviewed.</span></p>`
+      ? `<p class="callout">${icon("i-alert")}<span>${codeEstimate ? "The illustrative code mix is excluded from the IPR score. Readiness stays capped until repository provenance, licences and human review evidence are documented." : "No content signal is available for this asset, so readiness is capped until the script and supporting evidence are reviewed."}</span></p>`
       : "",
     state.storageFailed
       ? `<p class="callout">${icon("i-alert")}<span>This browser's storage is full or blocked, so the record won't survive a reload. Download the evidence file now.</span></p>`
@@ -1556,7 +1837,7 @@ function summaryCard(record, score, status, animate) {
       <div class="meters">
         <div class="meter">
           ${ring(ai, detectionTone(record.detection), "%", animate)}
-          <div class="meter__text"><span>${escapeHtml(meterLabel)}</span><strong>${aiHeadline(ai, record.detection)}</strong><p>${escapeHtml(aiNote)}</p></div>
+          <div class="meter__text"><span>${escapeHtml(meterLabel)}</span><strong>${codeEstimate ? "Illustrative repository mix" : aiHeadline(ai, record.detection)}</strong><p>${escapeHtml(aiNote)}</p></div>
         </div>
         <div class="meter">
           ${ring(score.total, iprTone(score.total), "", animate)}
@@ -1680,6 +1961,38 @@ function detectionCard(record) {
       ${signalCards ? `<div class="detector-signals">${signalCards}</div>` : ""}
       ${generatorHints ? `<div class="stats-row">${generatorHints}</div><p class="note">Generator hints are model similarities, not generator identification.</p>` : ""}
       ${detection.c2pa ? `<p class="note note--block">C2PA status reported by AI or Not: <strong>${escapeHtml(detection.c2pa.status || "unknown")}</strong>. Missing metadata does not prove that an image is human-made.</p>` : ""}`;
+  } else if (record.type === "code") {
+    const repository = record.repository || detection.repository || {};
+    const languages = Array.isArray(repository.languages) ? repository.languages : [];
+    const composition = Array.isArray(detection.composition) ? detection.composition : [];
+    const human = composition.find((item) => item.id === "human")?.pct ?? detection.humanPct ?? 0;
+    const mix = composition.map((item) => `
+      <li class="attribution-row attribution-row--${escapeHtml(item.id)}">
+        <span class="attribution-row__label"><strong>${escapeHtml(item.label)}</strong><b>${item.pct}%</b></span>
+        <span class="attribution-row__bar" aria-hidden="true"><i style="width:${item.pct}%"></i></span>
+      </li>`).join("");
+    const languageChips = languages.slice(0, 6).map((item) => `<span class="stat-chip"><b>${item.files}</b> ${escapeHtml(item.language)} files</span>`).join("");
+    const sampledFiles = (repository.sampledFiles || []).slice(0, 6).map((item) => `<li><span class="mono">${escapeHtml(item.path)}</span><small>${escapeHtml(item.language)} · ${item.lines.toLocaleString()} lines</small></li>`).join("");
+    intro = `${escapeHtml(repository.fullName || record.name)} · ${plural(repository.sourceFiles || 0, "source file")} · approximately ${(repository.estimatedLines || 0).toLocaleString()} lines`;
+    body = `
+      <p class="callout callout--info">${icon("i-alert")}<span><strong>Illustrative, deterministic estimate.</strong> Aright really imported the public GitHub tree and a bounded source sample, but GitHub code cannot reliably reveal whether Codex, ChatGPT or another model authored it. The same repository ID produces the same mix; a different repository produces a different mix.</span></p>
+      <div class="repo-overview">
+        <div>
+          <span class="panel-kicker">Imported repository</span>
+          <a href="${escapeHtml(repository.url)}" target="_blank" rel="noopener">${escapeHtml(repository.fullName || repository.url)}</a>
+          <small>${escapeHtml(repository.defaultBranch || "default branch")} · tree ${escapeHtml(String(repository.treeSha || "unknown").slice(0, 12))}${repository.treeTruncated ? " · partial GitHub tree" : ""}</small>
+        </div>
+        <span class="repo-human"><b>${human}%</b><small>Human baseline</small></span>
+      </div>
+      <ul class="attribution-list" aria-label="Illustrative contribution mix">${mix}</ul>
+      <div class="stats-row">
+        <span class="stat-chip"><b>${repository.sourceFiles || 0}</b> supported files</span>
+        <span class="stat-chip"><b>${(repository.estimatedLines || 0).toLocaleString()}</b> estimated lines</span>
+        <span class="stat-chip"><b>${repository.sampledFileCount || repository.sampledFiles?.length || 0}</b> sampled files</span>
+      </div>
+      ${languageChips ? `<div class="stats-row">${languageChips}</div>` : ""}
+      ${sampledFiles ? `<details class="repo-sample"><summary>Source sample coverage</summary><ul>${sampledFiles}</ul></details>` : ""}
+      ${repository.treeTruncated ? `<p class="callout">${icon("i-alert")}<span>GitHub marked this recursive tree as truncated, so coverage is partial and must not be described as a full-repository analysis.</span></p>` : ""}`;
   } else if (record.type === "video") {
     const scanned = detection.frames.filter((frame) => frame.aiPct != null);
     const flagged = scanned.filter((frame) => (frame.policyVerdict ? frame.policyVerdict === "likely_ai" : frame.aiPct >= 75));
@@ -1769,6 +2082,19 @@ function taskItem(task) {
 function planCard(record) {
   const total = record.tasks.length;
   const done = record.tasks.filter((task) => task.done).length;
+  const target = humanTargetPlan(record.type, record.detection, { repository: record.repository });
+  const targetDone = record.tasks.find((task) => task.id === "human-51")?.done;
+  const projected = target ? (targetDone ? target.targetHumanPct : target.baselineHumanPct) : null;
+  const quantity = target
+    ? record.type === "code"
+      ? `${target.rewriteLines.toLocaleString()} substantive lines across ${plural(target.filesToRewrite, "file")}`
+      : `${target.rewriteUnits.toLocaleString()} ${target.unit}`
+    : "";
+  const humanGoal = target ? `
+    <section class="human-goal" aria-label="Human contribution target">
+      <div><span>Human contribution plan</span><strong>${target.baselineHumanPct}% <i aria-hidden="true">→</i> ${projected}% <i aria-hidden="true">/</i> ${target.targetHumanPct}% target</strong></div>
+      <p>${target.gapPct > 0 ? `Minimum planned work: ${escapeHtml(quantity)}. Checking the task records a self-attested plan; it does not change the original detector or demo estimate.` : "The planning baseline already reaches the 51% target. Keep the supporting versions, source files and review record."}</p>
+    </section>` : "";
   const tasks = total
     ? `<div class="progress">
          <span>${done} of ${plural(total, "task")} done</span>
@@ -1781,8 +2107,9 @@ function planCard(record) {
   return `
     <article class="box section-card">
       <div class="section-card__head">
-        <div><h2><span class="step-no">3</span>Action plan: what to fix</h2><p>Highest priority first. A checked task is your completion declaration; it updates the readiness score but does not verify an attachment.</p></div>
+        <div><h2><span class="step-no">3</span>Action plan: what to fix</h2><p>Highest priority first. Checking a task records your self-attested completion. Only evidence and licence tasks can update readiness; none change the original detector or illustrative estimate.</p></div>
       </div>
+      ${humanGoal}
       ${tasks}
       <h3 class="group-title">Handled by Aright</h3>
       <ul class="auto-list">${automatedSteps(record).map((step) => `<li>${icon("i-check")}<span>${escapeHtml(step)}</span></li>`).join("")}</ul>
@@ -1798,7 +2125,9 @@ function protectionCard(record, status) {
     protected: "Review complete. Keep the downloaded evidence record with the original asset.",
   }[status];
 
-  const original = record.file
+  const original = record.type === "code"
+    ? `<a href="${escapeHtml(record.repository?.url || record.detection.repository?.url || "#")}" target="_blank" rel="noopener">${escapeHtml(record.repository?.fullName || record.name)}</a>`
+    : record.file
     ? `${escapeHtml(record.file.name)} · ${formatBytes(record.file.size)}`
     : `Pasted text · ${(record.detection.text || "").length.toLocaleString()} characters`;
   const detector = `${modelLabel(record)}${record.type === "video" ? " · sampled frames" : ""}`;
@@ -1818,7 +2147,7 @@ function protectionCard(record, status) {
         <dt>Record ID</dt><dd class="mono">${escapeHtml(record.id)}</dd>
         <dt>Analyzed</dt><dd>${escapeHtml(formatDate(record.createdAt))}</dd>
         <dt>Original</dt><dd>${original}</dd>
-        <dt>SHA-256</dt><dd class="mono">${record.fingerprint || "Not computed (needs HTTPS or localhost, and files under 250 MB)"}</dd>
+        <dt>${record.type === "code" ? "Repository/tree fingerprint" : "SHA-256"}</dt><dd class="mono">${record.fingerprint || "Not computed (needs HTTPS or localhost, and files under 250 MB)"}</dd>
         <dt>Detector</dt><dd>${detector}</dd>
         ${record.protectedAt ? `<dt>Review completed</dt><dd>${escapeHtml(formatDate(record.protectedAt))}</dd>` : ""}
       </dl>
@@ -1843,6 +2172,7 @@ function rawCard(record) {
 const REPORT_TAB_ORDER = ["findings", "plan", "review"];
 
 function preferredReportTab(record) {
+  if (record.type === "code") return "findings";
   return openTasks(record).length ? "plan" : "review";
 }
 
@@ -2053,7 +2383,9 @@ function renderVault() {
   els.exportAll.disabled = state.assets.length === 0;
   els.vault.innerHTML = state.assets
     .map((asset) => {
-      const original = asset.file ? `${asset.file.name} · ${formatBytes(asset.file.size)}` : "Pasted text";
+      const original = asset.type === "code"
+        ? `GitHub · ${asset.repository?.fullName || asset.name}`
+        : asset.file ? `${asset.file.name} · ${formatBytes(asset.file.size)}` : "Pasted text";
       return `
         <li class="vault__item">
           <div>
@@ -2074,6 +2406,8 @@ function renderVault() {
 function evidenceOf(record) {
   const score = scoreOf(record);
   const { detection } = record;
+  const humanPlan = humanTargetPlan(record.type, detection, { repository: record.repository });
+  const targetDone = Boolean(record.tasks.find((task) => task.id === "human-51")?.done);
   return {
     id: record.id,
     name: record.name,
@@ -2081,6 +2415,7 @@ function evidenceOf(record) {
     source: record.source,
     analyzedAt: record.createdAt,
     original: record.file,
+    repository: record.repository || detection.repository || null,
     sha256: record.fingerprint,
     declaredDetails: record.details,
     effectiveDetails: effectiveDetails(record),
@@ -2093,7 +2428,7 @@ function evidenceOf(record) {
       model: modelInfoOf(record),
       scanned: detection.checked,
       aiModelScore: detection.aiPct,
-      scoreSemantics: "screening-model score; not a calibrated authorship probability",
+      scoreSemantics: record.type === "code" ? detection.semantics : "screening-model score; not a calibrated authorship probability",
       verdict: detection.verdict || null,
       policyVerdict: detection.policyVerdict || null,
       providerVerdict: detection.providerVerdict || null,
@@ -2110,8 +2445,15 @@ function evidenceOf(record) {
       audioSegments: detection.segments || [],
       audioInputChecks: detection.inputChecks || null,
       transcript: detection.transcript || null,
+      illustrativeComposition: detection.composition || null,
     },
-    actionPlan: record.tasks.map(({ id, title, priority, done }) => ({ id, title, priority, done })),
+    humanContributionPlan: humanPlan ? {
+      ...humanPlan,
+      projectedHumanPct: targetDone ? humanPlan.targetHumanPct : humanPlan.baselineHumanPct,
+      selfAttestedCompletion: targetDone,
+      warning: "A planning metric; it does not alter the original detector/illustrative mix or prove authorship.",
+    } : null,
+    actionPlan: record.tasks.map(({ id, title, detail, priority, done, humanDeltaPct, target }) => ({ id, title, detail, priority, done, humanDeltaPct: humanDeltaPct || 0, target: target || null })),
     rawModelRecord: record.raw,
   };
 }
@@ -2156,7 +2498,7 @@ function renderCommandResults(query = "") {
   const needle = query.trim().toLowerCase();
   const actions = [
     { label: "Overview", detail: "Workspace status and recent activity", view: "overview", icon: "i-home" },
-    { label: "New analysis", detail: "Screen a text, image, video or audio asset", view: "analyze", icon: "i-plus" },
+    { label: "New analysis", detail: "Screen text, image, video, audio or a public code repository", view: "analyze", icon: "i-plus" },
     { label: "Asset register", detail: "Browse readiness and review status", view: "assets", icon: "i-facet" },
     { label: "Evidence vault", detail: "Export fingerprints and model records", view: "evidence", icon: "i-folder" },
   ].filter((item) => !needle || `${item.label} ${item.detail}`.toLowerCase().includes(needle));
@@ -2272,6 +2614,7 @@ function updateCostHint() {
       : els.transcriptInput.value.trim()
       ? "Spectra-AASIST3 speech screening + separate RoBERTa script screening."
       : "Spectra-AASIST3 · synthetic or cloned speech only.",
+    code: "Public GitHub tree + bounded source sample · stable URL-seeded illustrative mix · not forensic model attribution.",
   };
   els.costHint.textContent = hints[state.type];
 }
@@ -2356,7 +2699,7 @@ function prefillFrom(record) {
   const details = effectiveDetails(record);
   setType(record.type);
   if (record.type === "text") setFile("doc", null);
-  else setFile(record.type, null);
+  else if (["image", "video", "audio"].includes(record.type)) setFile(record.type, null);
   els.assetName.value = record.name;
   els.aiTool.value = details.tool;
   els.humanInput.value = details.human;
@@ -2368,11 +2711,12 @@ function prefillFrom(record) {
     updateCharCount();
   }
   if (record.type === "audio") els.transcriptInput.value = record.detection.transcript?.text || "";
+  if (record.type === "code") els.repoUrl.value = record.repository?.url || record.detection.repository?.url || "";
   updateDetailsSummary();
   updateCostHint();
   showView("analyze");
   els.intake.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
-  const target = $(`[data-pane="${record.type}"] textarea:not([disabled]), [data-pane="${record.type}"] .drop__input`);
+  const target = $(`[data-pane="${record.type}"] textarea:not([disabled]), [data-pane="${record.type}"] input:not([type="file"]):not([disabled]), [data-pane="${record.type}"] .drop__input`);
   target?.focus({ preventScroll: true });
 }
 
@@ -2402,7 +2746,7 @@ els.main.addEventListener("click", (event) => {
   const shortcut = event.target.closest("[data-empty-type]");
   if (shortcut) {
     setType(shortcut.dataset.emptyType);
-    $("[data-pane]:not([hidden]) textarea, [data-pane]:not([hidden]) .drop__input")?.focus({ preventScroll: true });
+    $("[data-pane]:not([hidden]) textarea, [data-pane]:not([hidden]) input:not([type=\"file\"]), [data-pane]:not([hidden]) .drop__input")?.focus({ preventScroll: true });
   }
 });
 

@@ -13,6 +13,7 @@ The production deployment is a static site plus zero-dependency Node functions i
 - `ADMIN_PASSWORD`: a strong console access key. Hosted detector calls deliberately stay disabled if this is missing.
 - `AIORNOT_AUDIO_ENABLED` (optional): defaults to `false`. Set it to `true` only if the AI or Not account plan has the `ai_voice` model enabled. It does not affect local Spectra-AASIST3.
 - `AIORNOT_TIMEOUT_MS` (optional): provider timeout; defaults to 120000.
+- `GITHUB_API_TOKEN` (optional): server-only GitHub credential for higher public-repository API limits. The importer works without it, but GitHub's unauthenticated limit is 60 requests/hour per origin IP.
 
 Deploy from the Vercel dashboard after importing this repository, or with the CLI:
 
@@ -57,6 +58,7 @@ Hosted Vercel runtime:
 - **Images:** AI or Not v2 `ai_generated` report. ≤25% is a low-signal band, ≥75% a high-signal band, and the middle is inconclusive. The bands are Aright review policy, not proof.
 - **Video:** browser-sampled frames sent to the same image endpoint. This is not full temporal/face-swap/audio analysis and normally uses one metered attempt per frame; an eligible credential failover can add one attempt for that frame.
 - **Audio:** disabled by default because AI or Not voice access depends on the account plan. Set `AIORNOT_AUDIO_ENABLED=true` only after `ai_voice` access is confirmed. Otherwise the UI directs users to the local Spectra-AASIST3 console. It does not detect AI music.
+- **Code:** imports a public GitHub repository tree and a bounded, non-executed source sample through GitHub's REST API. The ChatGPT/Codex/Claude/Copilot/Gemini/Human mix is a stable repository-ID-seeded illustration—not forensic code-authorship detection. Same repository, same result; a different repository gets a different deterministic mix.
 
 Local launcher runtime:
 
@@ -64,6 +66,9 @@ Local launcher runtime:
 - **Images:** when configured, AI or Not v2 is called with only the `ai_generated` report and its score is shown beside the pinned Community Forensics ViT-384 comparison. Scores are never averaged: both must enter the same ≤25%, 25–75%, or ≥75% policy band; otherwise the result is explicitly inconclusive. Without the API key, the self-hosted model remains available as a clearly labelled local-only path. The server defaults to 12 outbound provider attempts per minute and 2 concurrent attempts; both guards can be tightened in `.env`.
 - **Video:** the browser samples 3, 5, or 8 frames and sends each through the same image-provider comparison. This normally uses one AI or Not image attempt per frame; eligible credential failover can add one attempt for that frame. It is frame-level screening, not temporal deepfake analysis.
 - **Audio:** pinned Spectra-AASIST3 INT8 ONNX model screens consecutive 4.04-second windows covering the first 60 seconds for synthetic or cloned speech. Silence and sub-second clips are rejected. It does not detect AI music, and its multi-window clip policy is an explicitly uncalibrated Aright extension. An optional script is separately sent to the text model.
+- **Code:** uses the same safe public-GitHub importer as hosted mode. Source files are sampled only to estimate repository size/languages and are neither executed nor persisted. Configure `GITHUB_API_TOKEN` only if the public unauthenticated GitHub limit is too small.
+
+Every modality also receives a separate **51% Human contribution plan**. For code, Aright calculates concrete substantive lines, core files and behavior tests to hand-write; text uses words, images use traceable edit categories, video uses screened shots, and audio uses recorded/edited seconds. This is a self-attested planning target and never changes the original detector signal or proves authorship.
 
 Every evidence export records the model ID, revision, raw model response, score semantics, SHA-256 asset fingerprint where available, and the action-plan state. Hosted evidence also records the runtime credential slot, attempt count, failover flag, and normalized reason code; these are execution roles, never key material, prefixes, hashes, or provider credential bodies. See `THIRD_PARTY_NOTICES.md` for exact licenses, revisions, hashes, and the audio-model licensing caveat.
 
@@ -82,12 +87,14 @@ Copy `.env.example` to `.env` and set `ADMIN_PASSWORD` to gate the console UI an
 - `index.html`, `css/styles.css`, `js/main.js`: marketing website
 - `admin/index.html`, `css/admin.css`, `js/admin.js`: console UI and evidence workflow
 - `api/status.mjs`, `api/detect/[kind].mjs`, `lib/cloud-api.mjs`, `vercel.json`: hosted Vercel provider proxy
+- `lib/github-code.mjs`: validated public-GitHub importer and deterministic illustrative repository mix
 - `server.js`: zero-package Node static/API server and persistent worker manager
 - `ml_worker.py`: pinned text, image, and speech model adapters
 - `requirements-ml.txt`, `verify_environment.py`, `setup-models.ps1`, `start-aright.ps1`, `start-aright.cmd`: exact direct dependency checks, versioned setup fingerprint, verified model artifacts, health-checked one-command launch
 - `THIRD_PARTY_NOTICES.md`: model provenance, revisions, hashes, licenses, and limitations
 - `licenses/`, `assets/fonts/OFL-*.txt`: bundled upstream model and font license texts
 - `Airight.pdf`: source product presentation
+- `tests/cloud-api.test.mjs`, `tests/github-code.test.mjs`: mocked hosted-provider, credential-failover and GitHub-import contract tests
 
 ## Contact form
 

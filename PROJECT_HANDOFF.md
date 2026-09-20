@@ -24,7 +24,9 @@ Airight currently includes:
 - deterministic IPR-readiness scoring, prioritized tasks, browser-local register and downloadable JSON evidence;
 - password-gated hosted detector requests and server-side provider credentials;
 - optional server-side AI or Not credential failover for provider HTTP 401/402/403 only, with no automatic retry for 429, timeout, network, 5xx, or invalid input;
-- a compact result workspace with **Findings / Action plan / Review** tabs. The long Action Plan scrolls inside its panel on desktop, so Review no longer requires scrolling through the whole report.
+- a compact result workspace with **Findings / Action plan / Review** tabs. The long Action Plan scrolls inside its panel on desktop, so Review no longer requires scrolling through the whole report;
+- public GitHub repository import for Code: real tree/source-sample metadata plus a stable repository-ID-seeded ChatGPT/Codex/other/Human demo mix. It is explicitly illustrative, not forensic model attribution;
+- a separate 51% Human contribution plan with concrete code lines/files/tests, text words, image edit categories, video shots or audio seconds. Completing the task never rewrites the original model signal.
 
 Important product decision: detector scores and IPR readiness stay separate. A detector score is a review signal, never proof of authorship, infringement, ownership or legal protection.
 
@@ -76,6 +78,7 @@ Use the existing **`airight`** project. Production secrets already belong in Ver
 ## Secrets and data
 
 - `AIORNOT_API_KEY`, optional `AIORNOT_API_KEY_BACKUP`, and `ADMIN_PASSWORD` must exist only in local `.env` and Vercel encrypted environment variables.
+- `GITHUB_API_TOKEN` is optional and server-only. Public imports work without it at GitHub's lower unauthenticated rate; never paste a token into the browser or commit it.
 - The backup is attempted once only after provider 401/402/403. It is not used for timeouts, network errors, rate limits, invalid input, or provider 5xx responses because the first attempt may already be billable.
 - No credential value is recorded in this handoff or tracked source.
 - Provider credentials and the current admin password were previously shared in chat. Treat every pasted credential as compromised: rotate it out-of-band, update local `.env` and the encrypted Vercel Production values, then redeploy. Never put replacement values in Git, this handoff, or chat.
@@ -94,17 +97,20 @@ Use the existing **`airight`** project. Production secrets already belong in Ver
 | Video | 3/5/8 sampled frames | 3/5/8 sampled frames |
 | Audio | Disabled unless provider voice entitlement is explicitly enabled | Pinned Spectra-AASIST3 speech screening |
 | PDF/DOCX | Paste extracted text or upload TXT | Server-side PDF/DOCX/TXT extraction |
+| Code | Public GitHub tree + bounded source sample; deterministic demo mix | Same safe GitHub importer |
 
 Video is frame-level screening, not full temporal deepfake detection. Audio screening is speech-only, not AI-music detection.
 
 ## Last verified QA
 
-- Cloud API tests include primary/backup routing, fresh multipart bodies, no-retry failures, rate guards, and secret-redaction coverage. Run the tracked command below for the current count.
+- Tracked API/import tests: **29/29 passed**, including primary/backup routing, fresh multipart bodies, no-retry failures, rate guards, secret redaction, GitHub URL/SSRF validation, deterministic mixes and exact 51% line math.
 - Admin responsive/browser regression: **9/9 passed**.
+- Dedicated Code-import browser flow: **5/5 passed** at **1440×900, 1024×768, 390×844 and 320×700**, including reload, export, rescan, keyboard navigation, stable rerenders and no overflow.
+- Real local end-to-end import of `Surmavanick/Airight` passed through GitHub's live REST API: 15 eligible files, 8 bounded samples, stable 100% composition and no source-code persistence in the response.
 - Report workflow passed at **1824×983, 1440×900, 1280×800, 1024×768 and 390×844**.
 - Tested: tab keyboard navigation, task rerenders/focus, internal panel scroll preservation, Review completion/reopen, evidence download, second analysis, no horizontal overflow, and no browser/page errors.
 - Production deployment and the canonical alias must be smoke-tested after every provider/environment change without making an unnecessary paid detector request.
-- The 9/9 browser harness and screenshots currently live under ignored `tmp/`; they will not arrive in a fresh clone. Only `tests/cloud-api.test.mjs` is presently tracked.
+- The 9/9 browser harness and screenshots currently live under ignored `tmp/`; they will not arrive in a fresh clone. The zero-dependency `tests/cloud-api.test.mjs` and `tests/github-code.test.mjs` suites are tracked.
 
 Useful tracked check:
 
@@ -112,7 +118,8 @@ Useful tracked check:
 node --check server.js
 node --check js\admin.js
 node --check lib\cloud-api.mjs
-node --test tests\cloud-api.test.mjs
+node --check lib\github-code.mjs
+node --test tests\cloud-api.test.mjs tests\github-code.test.mjs
 git diff --check
 ```
 
@@ -121,7 +128,7 @@ git diff --check
 - `README.md` — complete setup, architecture and limitations
 - `index.html`, `css/styles.css`, `js/main.js` — marketing site
 - `admin/index.html`, `css/admin.css`, `js/admin.js` — console UI/workflow
-- `api/`, `lib/cloud-api.mjs`, `vercel.json` — hosted serverless API
+- `api/`, `lib/cloud-api.mjs`, `lib/github-code.mjs`, `vercel.json` — hosted serverless API and safe GitHub importer
 - `server.js`, `ml_worker.py` — local API and model worker
 - `Airight.pdf` — product source deck
 - `THIRD_PARTY_NOTICES.md`, `licenses/` — exact model provenance/licensing

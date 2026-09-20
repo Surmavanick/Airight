@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Aright Console | AI Analysis &amp; IPR Scoring</title>
-  <meta name="description" content="Analyze AI-generated text, images, video and audio, score their IP readiness, and get a concrete action plan." />
+  <meta name="description" content="Screen text, images, video, audio and public GitHub code repositories, score their IP readiness, and get a concrete action plan." />
   <meta name="robots" content="noindex" />
   <meta name="theme-color" content="#171915" />
   <link rel="icon" href="../assets/img/brand-mark.svg" type="image/svg+xml" />
@@ -25,6 +25,7 @@
       <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="M21 16l-5.5-5.5L5 20"/></symbol>
       <symbol id="i-video" viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/></symbol>
       <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="M8.5 7L3.5 12l5 5M15.5 7l5 5-5 5M13.5 4l-3 16"/></symbol>
       <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
@@ -160,7 +161,7 @@
         </header>
 
         <ol class="flow" id="flow" aria-label="Progress">
-          <li data-step="upload" aria-label="Step 1: Upload"><b>1</b><span>Upload</span></li>
+          <li data-step="upload" aria-label="Step 1: Import or upload"><b>1</b><span>Import / upload</span></li>
           <li data-step="score" aria-label="Step 2: AI analysis and IPR score"><b>2</b><span>AI analysis &amp; IPR score</span></li>
           <li data-step="plan" aria-label="Step 3: Action plan"><b>3</b><span>Action plan</span></li>
           <li data-step="protect" aria-label="Step 4: Review and protection"><b>4</b><span>Review &amp; protection</span></li>
@@ -180,6 +181,9 @@
               </button>
               <button class="types__btn" type="button" role="tab" id="type-audio" aria-selected="false" aria-controls="pane-audio" data-type="audio" tabindex="-1">
                 <svg class="icon" aria-hidden="true"><use href="#i-audio"/></svg><span>Audio</span><small class="types__availability" id="audioAvailabilityBadge" hidden>Unavailable hosted</small>
+              </button>
+              <button class="types__btn" type="button" role="tab" id="type-code" aria-selected="false" aria-controls="pane-code" data-type="code" tabindex="-1">
+                <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span>Code</span>
               </button>
             </div>
 
@@ -254,6 +258,15 @@
                 <textarea id="transcriptInput" rows="5" placeholder="Optional: paste the words for a separate text-model check"></textarea>
               </label>
               <p class="note" id="audioAvailabilityNote">The hosted console sends a 16 kHz voice sample to AI or Not when voice access is enabled; the local app uses Spectra-AASIST3. Both screen synthetic or cloned speech, not AI music. A supplied script is checked separately.</p>
+            </div>
+
+            <!-- Code repository -->
+            <div class="pane" id="pane-code" role="tabpanel" aria-labelledby="type-code" data-pane="code" hidden>
+              <label class="field" for="repoUrl">
+                <span class="field__label">Public GitHub repository URL</span>
+                <input id="repoUrl" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://github.com/owner/repository" />
+              </label>
+              <p class="note note--block">Aright imports the public repository tree and a bounded source-code sample through GitHub's API. Source files are not executed or stored. The ChatGPT, Codex, Human and other shares are a stable URL-seeded demo estimate—not forensic model-attribution evidence.</p>
             </div>
 
             <details class="details-disclosure">
@@ -336,6 +349,7 @@
                 <button type="button" data-empty-type="text">Text</button>
                 <button type="button" data-empty-type="image">Image</button>
                 <button type="button" data-empty-type="video">Video</button>
+                <button type="button" data-empty-type="code">Code</button>
               </div>
             </div>
 

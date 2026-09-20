@@ -24,6 +24,7 @@ const AIORNOT_API_KEY_BACKUP_CANDIDATE = String(process.env.AIORNOT_API_KEY_BACK
 const AIORNOT_API_KEY_BACKUP = AIORNOT_API_KEY && AIORNOT_API_KEY_BACKUP_CANDIDATE !== AIORNOT_API_KEY
   ? AIORNOT_API_KEY_BACKUP_CANDIDATE
   : "";
+const GITHUB_API_TOKEN = String(process.env.GITHUB_API_TOKEN || "").trim();
 const AIORNOT_TIMEOUT_MS = Number(process.env.AIORNOT_TIMEOUT_MS) || 120_000;
 const AIORNOT_MAX_REQUESTS_PER_MINUTE = Math.max(1, Number(process.env.AIORNOT_MAX_REQUESTS_PER_MINUTE) || 12);
 const AIORNOT_MAX_CONCURRENT = Math.max(1, Number(process.env.AIORNOT_MAX_CONCURRENT) || 2);
@@ -35,6 +36,12 @@ const ALLOW_FILE_ORIGIN_CORS = !AIORNOT_API_KEY && /^true$/i.test(String(process
 const WORKER_PATH = path.join(ROOT, "ml_worker.py");
 const VENV_PYTHON = path.join(ROOT, ".aright-venv", "Scripts", "python.exe");
 const PYTHON = String(process.env.PYTHON || (fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python"));
+let githubCodeModulePromise;
+
+function githubCodeModule() {
+  if (!githubCodeModulePromise) githubCodeModulePromise = import("./lib/github-code.mjs");
+  return githubCodeModulePromise;
+}
 
 const PRIVATE_SEGMENTS = new Set(["tmp", "node_modules", ".venv", ".aright-venv", "tests", "__pycache__"]);
 const PRIVATE_FILES = new Set([
@@ -436,6 +443,7 @@ class PersistentMlWorker {
     delete workerEnv.ADMIN_PASSWORD;
     delete workerEnv.AIORNOT_API_KEY;
     delete workerEnv.AIORNOT_API_KEY_BACKUP;
+    delete workerEnv.GITHUB_API_TOKEN;
     const child = spawn(PYTHON, ["-u", WORKER_PATH], {
       cwd: ROOT,
       windowsHide: true,
@@ -554,7 +562,15 @@ async function handleApi(req, res, pathname) {
             ...aiOrNotRateState(),
           } : null,
         },
+        github: {
+          primary: "GitHub REST API",
+          configured: true,
+          authenticated: Boolean(GITHUB_API_TOKEN),
+          publicOnly: true,
+          remoteProcessing: true,
+        },
       },
+      capabilities: { githubPublicRepositories: true },
       worker,
       workerError,
       authRequired: Boolean(ADMIN_PASSWORD),
@@ -563,20 +579,41 @@ async function handleApi(req, res, pathname) {
   }
 
   const kind = pathname.startsWith("/api/detect/") ? pathname.slice("/api/detect/".length) : "";
-  if (!["text", "file", "image", "audio"].includes(kind)) {
+  if (!["text", "file", "image", "audio", "github"].includes(kind)) {
     return sendJson(req, res, 404, { error: "Unknown endpoint." });
   }
   if (req.method !== "POST") return sendJson(req, res, 405, { error: "Use POST." });
   if (!isAuthorized(req)) return sendJson(req, res, 401, { error: "The console access key is missing or wrong." });
 
   const declared = Number(req.headers["content-length"] || 0);
-  if (declared > MAX_BODY_BYTES) return sendJson(req, res, 413, { error: "Upload is larger than 25 MB." });
+  const bodyLimit = kind === "github" ? 2_048 : MAX_BODY_BYTES;
+  if (declared > bodyLimit) return sendJson(req, res, 413, { error: kind === "github" ? "The GitHub import request is too large." : "Upload is larger than 25 MB." });
 
   let body;
   try {
     body = await readBody(req);
   } catch (error) {
     return sendJson(req, res, error.status || 400, { error: error.message });
+  }
+  if (body.length > bodyLimit) return sendJson(req, res, 413, { error: kind === "github" ? "The GitHub import request is too large." : "Upload is larger than 25 MB." });
+
+  if (kind === "github") {
+    let repositoryUrl = "";
+    try {
+      repositoryUrl = String(JSON.parse(body.toString("utf8")).repositoryUrl || "");
+    } catch {
+      return sendJson(req, res, 400, { error: "The GitHub import request must be valid JSON.", type: "INVALID_JSON" });
+    }
+    try {
+      const { importGithubRepository } = await githubCodeModule();
+      const result = await importGithubRepository(repositoryUrl, { fetchImpl: fetch, token: GITHUB_API_TOKEN });
+      return sendJson(req, res, 200, result);
+    } catch (error) {
+      return sendJson(req, res, Number(error.status) || 500, {
+        error: error.message || "The GitHub repository could not be imported.",
+        type: error.code || "GITHUB_IMPORT_ERROR",
+      });
+    }
   }
 
   let workerKind = kind;
