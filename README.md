@@ -58,7 +58,7 @@ Hosted Vercel runtime:
 - **Images:** AI or Not v2 `ai_generated` report. ≤25% is a low-signal band, ≥75% a high-signal band, and the middle is inconclusive. The bands are Aright review policy, not proof.
 - **Video:** browser-sampled frames sent to the same image endpoint. This is not full temporal/face-swap/audio analysis and normally uses one metered attempt per frame; an eligible credential failover can add one attempt for that frame.
 - **Audio:** disabled by default because AI or Not voice access depends on the account plan. Set `AIORNOT_AUDIO_ENABLED=true` only after `ai_voice` access is confirmed. Otherwise the UI directs users to the local Spectra-AASIST3 console. It does not detect AI music.
-- **Code:** imports a public GitHub repository tree and a bounded, non-executed source sample through GitHub's REST API. The ChatGPT/Codex/Claude/Copilot/Gemini/Human mix is a stable repository-ID-seeded illustration—not forensic code-authorship detection. Same repository, same result; a different repository gets a different deterministic mix.
+- **Code:** imports a public GitHub repository tree and a bounded, non-executed source sample through GitHub's REST API. The report also maps the public repository profile, creation/push/latest-commit timeline, language mix, activity counts, top contributors and import coverage without storing source code or contributor email addresses. The ChatGPT/Codex/Claude/Copilot/Gemini/Human mix is a stable repository-ID-seeded illustration—not forensic code-authorship detection. Same repository, same result; a different repository gets a different deterministic mix.
 
 Local launcher runtime:
 

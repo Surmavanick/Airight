@@ -69,7 +69,12 @@ const els = {
   assetCount: $("#assetCount"),
   sideLinks: $$(".side__link"),
   views: $$(".view"),
+  analyzeView: $("#view-analyze"),
+  analyzeTitle: $("#analyzeTitle"),
+  analyzeLead: $("#view-analyze .view__lead"),
+  flow: $("#flow"),
   flowSteps: $$("#flow li"),
+  workspace: $(".workspace"),
   intake: $("#intake"),
   typeButtons: $$(".types__btn"),
   panes: $$(".pane"),
@@ -86,6 +91,7 @@ const els = {
   useInput: $("#useInput"),
   licenseInput: $("#licenseInput"),
   provenanceInput: $("#provenanceInput"),
+  detailsDisclosure: $(".details-disclosure"),
   detailsSummary: $("#detailsSummary"),
   runBtn: $("#runBtn"),
   costHint: $("#costHint"),
@@ -125,6 +131,7 @@ const state = {
   previews: new Map(),
   expandedQuotes: new Set(),
   reportTabs: new Map(),
+  reportObserver: null,
   server: { online: false, ready: false, deployment: "", provider: "", providers: {}, providerFailover: {}, capabilities: {}, worker: null, authRequired: false, authorized: false },
   assets: [],
   assetsLoaded: false,
@@ -157,17 +164,57 @@ function toNumber(value) {
   return null;
 }
 
+function normalizeWebUrl(value, { githubOnly = false } = {}) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || url.username || url.password) return "";
+    if (githubOnly && !["github.com", "www.github.com"].includes(url.hostname.toLowerCase())) return "";
+    return url.href.slice(0, 500);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeIsoDate(value) {
+  const date = new Date(value || "");
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "";
+}
+
 function normalizeCodeRepository(value) {
   if (!value || typeof value !== "object" || typeof value.url !== "string" || typeof value.fullName !== "string") return null;
   return {
     id: toNumber(value.id),
     fullName: value.fullName.slice(0, 220),
-    url: value.url.slice(0, 400),
+    url: normalizeWebUrl(value.url, { githubOnly: true }),
+    owner: value.owner && typeof value.owner === "object" ? {
+      login: String(value.owner.login || "").slice(0, 80),
+      url: normalizeWebUrl(value.owner.url, { githubOnly: true }),
+      type: String(value.owner.type || "User").slice(0, 30),
+    } : null,
+    description: String(value.description || "").slice(0, 500),
+    homepage: normalizeWebUrl(value.homepage),
+    primaryLanguage: String(value.primaryLanguage || "").slice(0, 80),
+    topics: Array.isArray(value.topics) ? value.topics.slice(0, 12).map((item) => String(item || "").slice(0, 50)).filter(Boolean) : [],
+    createdAt: normalizeIsoDate(value.createdAt),
+    updatedAt: normalizeIsoDate(value.updatedAt),
+    pushedAt: normalizeIsoDate(value.pushedAt),
+    stats: {
+      stars: Math.max(0, Math.round(toNumber(value.stats?.stars) || 0)),
+      forks: Math.max(0, Math.round(toNumber(value.stats?.forks) || 0)),
+      openIssuesAndPulls: Math.max(0, Math.round(toNumber(value.stats?.openIssuesAndPulls) || 0)),
+      githubSizeKb: Math.max(0, Math.round(toNumber(value.stats?.githubSizeKb) || 0)),
+    },
     defaultBranch: String(value.defaultBranch || "").slice(0, 220),
     treeSha: String(value.treeSha || "").slice(0, 100),
     fingerprint: String(value.fingerprint || "").slice(0, 128),
     archived: Boolean(value.archived),
     fork: Boolean(value.fork),
+    isTemplate: Boolean(value.isTemplate),
+    disabled: Boolean(value.disabled),
+    forkParent: value.forkParent?.fullName ? {
+      fullName: String(value.forkParent.fullName).slice(0, 220),
+      url: normalizeWebUrl(value.forkParent.url, { githubOnly: true }),
+    } : null,
     license: String(value.license || "NOASSERTION").slice(0, 80),
     sourceFiles: Math.max(0, Math.round(toNumber(value.sourceFiles) || 0)),
     sourceBytes: Math.max(0, Math.round(toNumber(value.sourceBytes) || 0)),
@@ -186,6 +233,26 @@ function normalizeCodeRepository(value) {
       files: Math.max(0, Math.round(toNumber(item?.files) || 0)),
       bytes: Math.max(0, Math.round(toNumber(item?.bytes) || 0)),
     })) : [],
+    contributors: Array.isArray(value.contributors) ? value.contributors.slice(0, 12).map((item) => ({
+      login: String(item?.login || "").slice(0, 80),
+      url: normalizeWebUrl(item?.url, { githubOnly: true }),
+      type: String(item?.type || "User").slice(0, 30),
+      contributions: Math.max(0, Math.round(toNumber(item?.contributions) || 0)),
+    })).filter((item) => item.login) : [],
+    contributorsHasMore: Boolean(value.contributorsHasMore),
+    latestCommit: value.latestCommit?.sha ? {
+      sha: String(value.latestCommit.sha).slice(0, 64),
+      url: normalizeWebUrl(value.latestCommit.url, { githubOnly: true }),
+      message: String(value.latestCommit.message || "").slice(0, 160),
+      date: normalizeIsoDate(value.latestCommit.date),
+      verified: Boolean(value.latestCommit.verified),
+      author: {
+        login: String(value.latestCommit.author?.login || "").slice(0, 80),
+        name: String(value.latestCommit.author?.name || "Unknown author").slice(0, 100),
+        url: normalizeWebUrl(value.latestCommit.author?.url, { githubOnly: true }),
+      },
+    } : null,
+    importedAt: normalizeIsoDate(value.importedAt),
     warnings: Array.isArray(value.warnings) ? value.warnings.slice(0, 8).map((item) => String(item).slice(0, 500)) : [],
   };
 }
@@ -215,6 +282,25 @@ function formatTime(seconds) {
 
 function formatDate(iso) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function formatDateOnly(iso) {
+  if (!iso) return "Not available";
+  return new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+function formatCompactNumber(value) {
+  return new Intl.NumberFormat(undefined, { notation: Number(value) >= 1000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(Number(value) || 0);
+}
+
+function compactFingerprint(value) {
+  const text = String(value || "");
+  return text.length > 26 ? `${text.slice(0, 12)}…${text.slice(-10)}` : text;
+}
+
+function initials(value) {
+  const parts = String(value || "?").split(/[-_\s]+/).filter(Boolean);
+  return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : parts[0]?.slice(0, 2) || "?").toUpperCase();
 }
 
 function newId() {
@@ -1682,6 +1768,7 @@ async function runAnalysis() {
     renderCollections();
     showRecord(record, { animate: true });
     els.results.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
+    window.setTimeout(focusReportHeading, motionQuery.matches ? 0 : 320);
   } catch (error) {
     showError(error);
     els.results.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
@@ -1693,6 +1780,21 @@ async function runAnalysis() {
 /* ---------- Result states ---------- */
 function showOnly(target) {
   for (const el of [els.emptyState, els.loadingState, els.errorState, els.report]) el.hidden = el !== target;
+  const mode = target === els.report ? "report" : target === els.loadingState ? "loading" : target === els.errorState ? "error" : "composer";
+  els.workspace.dataset.mode = mode;
+  if (mode !== "report") {
+    state.reportObserver?.disconnect();
+    state.reportObserver = null;
+  }
+  els.flow.hidden = mode === "report";
+  const heading = {
+    composer: ["Screen a new asset", "Run a detector, assess evidence readiness and create a prioritized review plan."],
+    loading: ["Analyzing asset", "Aright is importing the source, screening available signals and building the review plan."],
+    error: ["Analysis needs attention", "Review the error, adjust the source or connection, and try the analysis again."],
+    report: ["Analysis report", "Repository intelligence, human-work targets and evidence are organized in one continuous workspace."],
+  }[mode];
+  els.analyzeTitle.textContent = heading[0];
+  els.analyzeLead.textContent = heading[1];
 }
 
 function setBusy(busy) {
@@ -1784,7 +1886,7 @@ function summaryCard(record, score, status, animate) {
   const meterLabel = codeEstimate ? "Estimated AI-assisted share" : externalSignal ? `AI or Not ${record.type === "audio" ? "voice" : record.type === "video" ? "frame" : record.type} signal` : `${TYPE_LABEL[record.type]} model score`;
   const aiNote =
     codeEstimate
-      ? "Stable repository-ID-seeded demo mix; not code authorship detection or proof of which model was used."
+      ? "Stable repository-ID-seeded demo mix; full method and imported coverage are documented below."
       : ai == null
       ? "No content model score is available for this legacy record."
       : record.type === "video"
@@ -1816,8 +1918,8 @@ function summaryCard(record, score, status, animate) {
     .join("");
 
   const notices = [
-    score.capped
-      ? `<p class="callout">${icon("i-alert")}<span>${codeEstimate ? "The illustrative code mix is excluded from the IPR score. Readiness stays capped until repository provenance, licences and human review evidence are documented." : "No content signal is available for this asset, so readiness is capped until the script and supporting evidence are reviewed."}</span></p>`
+    score.capped && !codeEstimate
+      ? `<p class="callout">${icon("i-alert")}<span>No content signal is available for this asset, so readiness is capped until the script and supporting evidence are reviewed.</span></p>`
       : "",
     state.storageFailed
       ? `<p class="callout">${icon("i-alert")}<span>This browser's storage is full or blocked, so the record won't survive a reload. Download the evidence file now.</span></p>`
@@ -1829,10 +1931,10 @@ function summaryCard(record, score, status, animate) {
       <div class="section-card__head">
         <div>
           <p class="eyebrow">${TYPE_LABEL[record.type]} · ${escapeHtml(record.id)}</p>
-          <h2>${escapeHtml(record.name)}</h2>
+          <h2>${codeEstimate ? "Repository assessment" : escapeHtml(record.name)}</h2>
           <p class="summary__meta"><span>Analyzed ${escapeHtml(formatDate(record.createdAt))}</span><span>${escapeHtml(record.details.tool || "AI tool not specified")}</span></p>
         </div>
-        <span class="tag tag--${STATUS[status].tag}">${STATUS[status].label}</span>
+        <div class="summary__actions"><button class="btn btn--outline btn--compact" type="button" data-action="rescan">Edit setup</button><span class="tag tag--${STATUS[status].tag}">${STATUS[status].label}</span></div>
       </div>
       <div class="meters">
         <div class="meter">
@@ -1965,33 +2067,96 @@ function detectionCard(record) {
     const repository = record.repository || detection.repository || {};
     const languages = Array.isArray(repository.languages) ? repository.languages : [];
     const composition = Array.isArray(detection.composition) ? detection.composition : [];
-    const human = composition.find((item) => item.id === "human")?.pct ?? detection.humanPct ?? 0;
     const mix = composition.map((item) => `
       <li class="attribution-row attribution-row--${escapeHtml(item.id)}">
         <span class="attribution-row__label"><strong>${escapeHtml(item.label)}</strong><b>${item.pct}%</b></span>
         <span class="attribution-row__bar" aria-hidden="true"><i style="width:${item.pct}%"></i></span>
       </li>`).join("");
-    const languageChips = languages.slice(0, 6).map((item) => `<span class="stat-chip"><b>${item.files}</b> ${escapeHtml(item.language)} files</span>`).join("");
-    const sampledFiles = (repository.sampledFiles || []).slice(0, 6).map((item) => `<li><span class="mono">${escapeHtml(item.path)}</span><small>${escapeHtml(item.language)} · ${item.lines.toLocaleString()} lines</small></li>`).join("");
-    intro = `${escapeHtml(repository.fullName || record.name)} · ${plural(repository.sourceFiles || 0, "source file")} · approximately ${(repository.estimatedLines || 0).toLocaleString()} lines`;
+    const totalLanguageBytes = Math.max(1, languages.reduce((sum, item) => sum + (item.bytes || 0), 0));
+    const languageRows = languages.slice(0, 8).map((item) => {
+      const pct = Math.max(2, Math.round((item.bytes / totalLanguageBytes) * 100));
+      return `<li><span><strong>${escapeHtml(item.language)}</strong><small>${plural(item.files, "file")}</small></span><b>${Math.round((item.bytes / totalLanguageBytes) * 100)}%</b><i aria-hidden="true" style="--language-share:${pct}%"></i></li>`;
+    }).join("");
+    const sampledFiles = (repository.sampledFiles || []).slice(0, 8).map((item) => `<li><span class="mono">${escapeHtml(item.path)}</span><small>${escapeHtml(item.language)} · ${item.lines.toLocaleString()} lines · ${formatBytes(item.size)}</small></li>`).join("");
+    const topics = (repository.topics || []).map((topic) => `<span>${escapeHtml(topic)}</span>`).join("");
+    const badges = [
+      repository.license && repository.license !== "NOASSERTION" ? repository.license : "Licence not detected",
+      repository.archived ? "Archived" : "Active",
+      repository.fork ? "Fork" : "Original repository",
+      repository.isTemplate ? "Template" : "",
+    ].filter(Boolean).map((label) => `<span>${escapeHtml(label)}</span>`).join("");
+    const contributors = (repository.contributors || []).map((item) => `
+      <li>
+        <span class="contributor-avatar" aria-hidden="true">${escapeHtml(initials(item.login))}</span>
+        <span><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.login)}</a><small>${escapeHtml(item.type)} · ${item.contributions.toLocaleString()} commits</small></span>
+        <b>${formatCompactNumber(item.contributions)}</b>
+      </li>`).join("");
+    const latest = repository.latestCommit;
+    const latestTitle = latest?.message || "Latest commit unavailable";
+    const latestAuthor = latest ? (latest.author?.login || latest.author?.name || "Unknown author") : "GitHub metadata";
+    const warnings = (repository.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
+    intro = "Public GitHub repository intelligence · bounded source sample · no code execution";
     body = `
-      <p class="callout callout--info">${icon("i-alert")}<span><strong>Illustrative, deterministic estimate.</strong> Aright really imported the public GitHub tree and a bounded source sample, but GitHub code cannot reliably reveal whether Codex, ChatGPT or another model authored it. The same repository ID produces the same mix; a different repository produces a different mix.</span></p>
-      <div class="repo-overview">
-        <div>
-          <span class="panel-kicker">Imported repository</span>
-          <a href="${escapeHtml(repository.url)}" target="_blank" rel="noopener">${escapeHtml(repository.fullName || repository.url)}</a>
-          <small>${escapeHtml(repository.defaultBranch || "default branch")} · tree ${escapeHtml(String(repository.treeSha || "unknown").slice(0, 12))}${repository.treeTruncated ? " · partial GitHub tree" : ""}</small>
+      <section class="repo-profile" id="repository-profile" aria-labelledby="repository-profile-title">
+        <div class="repo-profile__main">
+          <p class="panel-kicker">${escapeHtml(repository.owner?.type || "GitHub")} · ${escapeHtml(repository.owner?.login || "Public owner")}</p>
+          <h3 id="repository-profile-title"><a href="${escapeHtml(repository.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(repository.fullName || repository.url)}</a></h3>
+          <p>${escapeHtml(repository.description || "No repository description was published on GitHub.")}</p>
+          <div class="repo-badges">${badges}</div>
+          ${topics ? `<div class="repo-topics" aria-label="Repository topics">${topics}</div>` : ""}
         </div>
-        <span class="repo-human"><b>${human}%</b><small>Human baseline</small></span>
+        <div class="repo-profile__actions">
+          <a class="btn btn--outline" href="${escapeHtml(repository.url)}" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a>
+          ${repository.homepage ? `<a class="text-action" href="${escapeHtml(repository.homepage)}" target="_blank" rel="noopener noreferrer">Project website ↗</a>` : ""}
+        </div>
+      </section>
+
+      <dl class="repo-kpis" aria-label="Repository snapshot">
+        <div><dt>Stars</dt><dd>${formatCompactNumber(repository.stats?.stars)}</dd></div>
+        <div><dt>Forks</dt><dd>${formatCompactNumber(repository.stats?.forks)}</dd></div>
+        <div><dt>Issues + PRs</dt><dd>${formatCompactNumber(repository.stats?.openIssuesAndPulls)}</dd></div>
+        <div><dt>Source files</dt><dd>${(repository.sourceFiles || 0).toLocaleString()}</dd></div>
+        <div><dt>Estimated LOC</dt><dd>${formatCompactNumber(repository.estimatedLines)}</dd></div>
+        <div><dt>Repository size</dt><dd>${formatBytes((repository.stats?.githubSizeKb || 0) * 1024)}</dd></div>
+      </dl>
+
+      <section class="repo-timeline" aria-label="Repository timeline">
+        <article><span>Created on GitHub</span><strong><time datetime="${escapeHtml(repository.createdAt || "")}">${escapeHtml(formatDateOnly(repository.createdAt))}</time></strong><small>GitHub repository creation date</small></article>
+        <article><span>Last push</span><strong><time datetime="${escapeHtml(repository.pushedAt || "")}">${escapeHtml(formatDateOnly(repository.pushedAt))}</time></strong><small>Most recent GitHub push activity</small></article>
+        <article><span>Latest ${escapeHtml(repository.defaultBranch || "default")} commit</span><strong title="${escapeHtml(latestTitle)}">${escapeHtml(latestTitle)}</strong><small>${escapeHtml(latestAuthor)}${latest?.date ? ` · ${escapeHtml(formatDateOnly(latest.date))}` : ""}${latest?.verified ? " · Verified" : ""}</small></article>
+      </section>
+
+      <div class="repo-analysis-grid">
+        <section class="repo-panel" aria-labelledby="composition-title">
+          <header><div><p class="panel-kicker">Illustrative estimate</p><h3 id="composition-title">Contribution mix</h3></div><span class="repo-panel__meta">Stable per repository</span></header>
+          <ul class="attribution-list" aria-label="Illustrative contribution mix">${mix}</ul>
+        </section>
+        <section class="repo-panel" aria-labelledby="languages-title">
+          <header><div><p class="panel-kicker">Imported tree</p><h3 id="languages-title">Languages</h3></div><span class="repo-panel__meta">${plural(languages.length, "language")}</span></header>
+          ${languageRows ? `<ul class="language-list">${languageRows}</ul>` : `<p class="note">Language metadata was unavailable.</p>`}
+        </section>
       </div>
-      <ul class="attribution-list" aria-label="Illustrative contribution mix">${mix}</ul>
-      <div class="stats-row">
-        <span class="stat-chip"><b>${repository.sourceFiles || 0}</b> supported files</span>
-        <span class="stat-chip"><b>${(repository.estimatedLines || 0).toLocaleString()}</b> estimated lines</span>
-        <span class="stat-chip"><b>${repository.sampledFileCount || repository.sampledFiles?.length || 0}</b> sampled files</span>
+
+      <div class="repo-analysis-grid repo-analysis-grid--secondary">
+        <section class="repo-panel" aria-labelledby="contributors-title">
+          <header><div><p class="panel-kicker">Public GitHub activity</p><h3 id="contributors-title">Top contributors</h3></div><span class="repo-panel__meta">${repository.contributorsHasMore ? "Top 12" : plural((repository.contributors || []).length, "profile")}</span></header>
+          ${contributors ? `<ul class="contributors-list">${contributors}</ul>` : `<p class="note">Contributor metadata was unavailable for this import.</p>`}
+        </section>
+        <section class="repo-panel" aria-labelledby="coverage-title">
+          <header><div><p class="panel-kicker">Technical record</p><h3 id="coverage-title">Import coverage</h3></div><span class="repo-panel__meta">${repository.treeTruncated ? "Partial tree" : "Complete tree response"}</span></header>
+          <dl class="coverage-list">
+            <div><dt>Default branch</dt><dd class="mono">${escapeHtml(repository.defaultBranch || "Unknown")}</dd></div>
+            <div><dt>Tree fingerprint</dt><dd class="mono">${escapeHtml(String(repository.treeSha || "Unknown").slice(0, 12))}</dd></div>
+            <div><dt>Sampled source</dt><dd>${repository.sampledFileCount || repository.sampledFiles?.length || 0} files · ${formatBytes(repository.sampledBytes || 0)}</dd></div>
+            <div><dt>Imported</dt><dd>${escapeHtml(formatDate(repository.importedAt || record.createdAt))}</dd></div>
+          </dl>
+          ${sampledFiles ? `<details class="repo-sample"><summary>View sampled source paths</summary><ul>${sampledFiles}</ul></details>` : ""}
+        </section>
       </div>
-      ${languageChips ? `<div class="stats-row">${languageChips}</div>` : ""}
-      ${sampledFiles ? `<details class="repo-sample"><summary>Source sample coverage</summary><ul>${sampledFiles}</ul></details>` : ""}
+
+      <p class="callout callout--info repo-method-note">${icon("i-alert")}<span><strong>Illustrative—not forensic attribution.</strong> Aright imported public GitHub metadata, the repository tree and a bounded source sample. Source code cannot reliably reveal whether Codex, ChatGPT or another model authored it. The same repository ID produces the same demo mix; source files are never executed or persisted.</span></p>
+      ${repository.forkParent?.fullName ? `<p class="note">Forked from <a href="${escapeHtml(repository.forkParent.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(repository.forkParent.fullName)}</a>.</p>` : ""}
+      ${warnings ? `<details class="repo-warnings"><summary>Import notes</summary><ul>${warnings}</ul></details>` : ""}
       ${repository.treeTruncated ? `<p class="callout">${icon("i-alert")}<span>GitHub marked this recursive tree as truncated, so coverage is partial and must not be described as a full-repository analysis.</span></p>` : ""}`;
   } else if (record.type === "video") {
     const scanned = detection.frames.filter((frame) => frame.aiPct != null);
@@ -2050,10 +2215,11 @@ function detectionCard(record) {
       ${detection.transcript?.checked ? `<div style="margin-top:16px"><h3 class="group-title">Separate script analysis</h3>${textFindings(detection.transcript)}</div>` : ""}`;
   }
 
+  const findingsTitle = record.type === "code" ? "Repository intelligence" : "What the models found";
   return `
     <article class="box section-card">
       <div class="section-card__head">
-        <div><h2><span class="step-no">2</span>What the models found</h2><p>${intro}</p></div>
+        <div><h2><span class="step-no">2</span>${findingsTitle}</h2><p>${intro}</p></div>
       </div>
       ${body}
     </article>`;
@@ -2131,6 +2297,9 @@ function protectionCard(record, status) {
     ? `${escapeHtml(record.file.name)} · ${formatBytes(record.file.size)}`
     : `Pasted text · ${(record.detection.text || "").length.toLocaleString()} characters`;
   const detector = `${modelLabel(record)}${record.type === "video" ? " · sampled frames" : ""}`;
+  const fingerprint = record.fingerprint
+    ? `<span class="mono" title="${escapeHtml(record.fingerprint)}">${escapeHtml(compactFingerprint(record.fingerprint))}</span><button class="text-action" type="button" data-copy-fingerprint>Copy</button>`
+    : `<span>Not computed (needs HTTPS or localhost, and files under 250 MB)</span>`;
 
   const primary =
     status === "protected"
@@ -2141,20 +2310,18 @@ function protectionCard(record, status) {
     <article class="box section-card">
       <div class="section-card__head">
         <div><h2><span class="step-no">4</span>Review &amp; protection</h2><p>${sentence}</p></div>
-        <span class="tag tag--${STATUS[status].tag}">${STATUS[status].label}</span>
       </div>
       <dl class="evidence">
         <dt>Record ID</dt><dd class="mono">${escapeHtml(record.id)}</dd>
         <dt>Analyzed</dt><dd>${escapeHtml(formatDate(record.createdAt))}</dd>
         <dt>Original</dt><dd>${original}</dd>
-        <dt>${record.type === "code" ? "Repository/tree fingerprint" : "SHA-256"}</dt><dd class="mono">${record.fingerprint || "Not computed (needs HTTPS or localhost, and files under 250 MB)"}</dd>
+        <dt>${record.type === "code" ? "Repository/tree fingerprint" : "SHA-256"}</dt><dd class="hash-value">${fingerprint}</dd>
         <dt>Detector</dt><dd>${detector}</dd>
         ${record.protectedAt ? `<dt>Review completed</dt><dd>${escapeHtml(formatDate(record.protectedAt))}</dd>` : ""}
       </dl>
       <div class="actions">
         ${primary}
         <button class="btn btn--outline" type="button" data-action="download">${icon("i-download")}Download evidence</button>
-        <button class="btn btn--outline" type="button" data-action="rescan">Analyze a new version</button>
       </div>
       <p class="disclaimer">Model scores are screening signals, not proof of authorship, infringement, or legal protection. Checklist completion is self-attested; the downloaded JSON is not a signed or tamper-evident legal record. IPR readiness is documentation guidance, not legal advice.</p>
     </article>`;
@@ -2169,59 +2336,82 @@ function rawCard(record) {
     </details>`;
 }
 
-const REPORT_TAB_ORDER = ["findings", "plan", "review"];
+const REPORT_SECTION_ORDER = ["findings", "plan", "review"];
 
-function preferredReportTab(record) {
-  if (record.type === "code") return "findings";
-  return openTasks(record).length ? "plan" : "review";
+function preferredReportTab() {
+  return "findings";
 }
 
 function activeReportTab(record) {
   const saved = state.reportTabs.get(record.id);
-  return REPORT_TAB_ORDER.includes(saved) ? saved : preferredReportTab(record);
+  return REPORT_SECTION_ORDER.includes(saved) ? saved : preferredReportTab(record);
 }
 
 function reportWorkspace(record, status) {
   const active = activeReportTab(record);
   const open = openTasks(record).length;
   const ai = record.detection.aiPct;
-  const tabs = [
-    { id: "findings", label: "Findings", meta: ai == null ? "Not scanned" : `${Math.round(ai)}% signal` },
-    { id: "plan", label: "Action plan", meta: open ? `${open} open` : "Complete" },
-    { id: "review", label: "Review", meta: STATUS[status].label },
+  const sections = [
+    { id: "findings", label: record.type === "code" ? "Repository" : "Findings", meta: record.type === "code" ? "Imported" : ai == null ? "Not scanned" : `${Math.round(ai)}% signal` },
+    { id: "plan", label: "Human plan", meta: open ? `${open} open` : "Complete" },
+    { id: "review", label: "Evidence", meta: STATUS[status].label },
   ];
-  const tabList = tabs.map((tab) => {
-    const selected = tab.id === active;
-    return `<button class="report-tab${selected ? " is-active" : ""}" type="button" role="tab" id="report-tab-${tab.id}" aria-controls="report-panel-${tab.id}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}" data-report-tab="${tab.id}"><span>${tab.label}</span><small>${tab.meta}</small></button>`;
+  const nav = sections.map((section) => {
+    const selected = section.id === active;
+    return `<button class="report-nav__item${selected ? " is-active" : ""}" type="button" aria-controls="report-section-${section.id}" aria-current="${selected ? "location" : "false"}" data-report-anchor="${section.id}"><span>${section.label}</span><small>${section.meta}</small></button>`;
   }).join("");
-  const panel = (id, content) => `<section class="report-tabpanel" id="report-panel-${id}" role="tabpanel" aria-labelledby="report-tab-${id}" tabindex="0" data-report-panel="${id}"${id === active ? "" : " hidden"}>${content}</section>`;
   return `
     <section class="report-workspace" aria-label="Analysis report details">
-      <div class="report-tabs" role="tablist" aria-label="Report sections">${tabList}</div>
-      <div class="report-tabpanels">
-        ${panel("findings", detectionCard(record))}
-        ${panel("plan", planCard(record))}
-        ${panel("review", `${protectionCard(record, status)}${rawCard(record)}`)}
+      <nav class="report-nav" aria-label="Analysis report sections">${nav}</nav>
+      <div class="report-sections">
+        <section class="report-section" id="report-section-findings" tabindex="-1" data-report-section="findings">${detectionCard(record)}</section>
+        <section class="report-section" id="report-section-plan" tabindex="-1" data-report-section="plan">${planCard(record)}</section>
+        <section class="report-section" id="report-section-review" tabindex="-1" data-report-section="review">${protectionCard(record, status)}${rawCard(record)}</section>
       </div>
     </section>`;
 }
 
-function activateReportTab(tab, { focus = false } = {}) {
+function activateReportSection(section, { focus = false, scroll = true } = {}) {
   const record = currentRecord();
-  if (!record || !REPORT_TAB_ORDER.includes(tab)) return;
-  const button = $(`[data-report-tab="${tab}"]`, els.report);
+  if (!record || !REPORT_SECTION_ORDER.includes(section)) return;
+  const button = $(`[data-report-anchor="${section}"]`, els.report);
   if (!button) return;
-  state.reportTabs.set(record.id, tab);
-  $$('[data-report-tab]', els.report).forEach((item) => {
-    const selected = item.dataset.reportTab === tab;
+  state.reportTabs.set(record.id, section);
+  $$('[data-report-anchor]', els.report).forEach((item) => {
+    const selected = item.dataset.reportAnchor === section;
     item.classList.toggle("is-active", selected);
-    item.setAttribute("aria-selected", String(selected));
-    item.tabIndex = selected ? 0 : -1;
+    item.setAttribute("aria-current", selected ? "location" : "false");
   });
-  $$('[data-report-panel]', els.report).forEach((item) => {
-    item.hidden = item.dataset.reportPanel !== tab;
-  });
+  if (scroll) $(`[data-report-section="${section}"]`, els.report)?.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
   if (focus) button.focus({ preventScroll: true });
+}
+
+function observeReportSections() {
+  state.reportObserver?.disconnect();
+  state.reportObserver = null;
+  if (!("IntersectionObserver" in window)) return;
+  const sections = $$('[data-report-section]', els.report);
+  if (!sections.length) return;
+
+  const visible = new Map();
+  state.reportObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const id = entry.target.dataset.reportSection;
+      if (entry.isIntersecting) visible.set(id, entry.boundingClientRect.top);
+      else visible.delete(id);
+    }
+    if (!visible.size) return;
+    const record = currentRecord();
+    if (!record) return;
+    const active = [...visible.entries()].sort((a, b) => Math.abs(a[1] - 118) - Math.abs(b[1] - 118))[0]?.[0];
+    if (active && active !== activeReportTab(record)) {
+      activateReportSection(active, { scroll: false });
+    }
+  }, {
+    rootMargin: "-110px 0px -58% 0px",
+    threshold: [0, 0.08, 0.25, 0.5],
+  });
+  sections.forEach((section) => state.reportObserver.observe(section));
 }
 
 function renderReport(record, { animate = false } = {}) {
@@ -2229,17 +2419,13 @@ function renderReport(record, { animate = false } = {}) {
   const status = statusOf(record);
   if (!state.reportTabs.has(record.id)) state.reportTabs.set(record.id, preferredReportTab(record));
   const selectedTab = activeReportTab(record);
-  const isSameRecord = els.report.dataset.recordId === record.id;
-  const previousScroll = isSameRecord
-    ? $(`[data-report-panel="${selectedTab}"]`, els.report)?.scrollTop || 0
-    : 0;
   els.report.innerHTML = [
     summaryCard(record, score, status, animate),
     reportWorkspace(record, status),
   ].join("");
   els.report.dataset.recordId = record.id;
-  const restoredPanel = $(`[data-report-panel="${selectedTab}"]`, els.report);
-  if (restoredPanel) restoredPanel.scrollTop = previousScroll;
+  activateReportSection(selectedTab, { scroll: false });
+  observeReportSections();
   updateFlow(stageFor(record));
 
   if (animate) {
@@ -2531,7 +2717,8 @@ function executeCommand(button) {
   const id = button?.dataset.commandOpen;
   closeCommandMenu();
   if (view) {
-    showView(view, { focus: true });
+    if (view === "analyze") startNewAnalysis();
+    else showView(view, { focus: true });
     return;
   }
   if (id) {
@@ -2563,6 +2750,13 @@ function showView(name, { focus = false } = {}) {
   if (els.topbarWorkspace) els.topbarWorkspace.textContent = labels[view];
   window.scrollTo({ top: 0 });
   if (focus) $(`#view-${view} .view__title`)?.focus({ preventScroll: true });
+}
+
+function startNewAnalysis() {
+  state.currentId = null;
+  showOnly(els.emptyState);
+  updateFlow("upload");
+  showView("analyze", { focus: true });
 }
 
 /* ---------- Intake ---------- */
@@ -2714,6 +2908,8 @@ function prefillFrom(record) {
   if (record.type === "code") els.repoUrl.value = record.repository?.url || record.detection.repository?.url || "";
   updateDetailsSummary();
   updateCostHint();
+  showOnly(els.emptyState);
+  updateFlow("upload");
   showView("analyze");
   els.intake.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
   const target = $(`[data-pane="${record.type}"] textarea:not([disabled]), [data-pane="${record.type}"] input:not([type="file"]):not([disabled]), [data-pane="${record.type}"] .drop__input`);
@@ -2740,7 +2936,9 @@ els.sideLinks.forEach((link) => {
 els.main.addEventListener("click", (event) => {
   const target = event.target.closest("[data-view-target], [data-overview-view]");
   if (target) {
-    showView(target.dataset.viewTarget || target.dataset.overviewView, { focus: true });
+    const view = target.dataset.viewTarget || target.dataset.overviewView;
+    if (view === "analyze") startNewAnalysis();
+    else showView(view, { focus: true });
     return;
   }
   const shortcut = event.target.closest("[data-empty-type]");
@@ -2750,8 +2948,8 @@ els.main.addEventListener("click", (event) => {
   }
 });
 
-els.newAnalysisBtn.addEventListener("click", () => showView("analyze", { focus: true }));
-els.overviewNewAnalysis.addEventListener("click", () => showView("analyze", { focus: true }));
+els.newAnalysisBtn.addEventListener("click", startNewAnalysis);
+els.overviewNewAnalysis.addEventListener("click", startNewAnalysis);
 
 els.typeButtons.forEach((button, index) => {
   button.addEventListener("click", () => setType(button.dataset.type));
@@ -2820,9 +3018,9 @@ els.report.addEventListener("change", (event) => {
 });
 
 els.report.addEventListener("click", (event) => {
-  const reportTab = event.target.closest("[data-report-tab]");
-  if (reportTab) {
-    activateReportTab(reportTab.dataset.reportTab, { focus: true });
+  const reportAnchor = event.target.closest("[data-report-anchor]");
+  if (reportAnchor) {
+    activateReportSection(reportAnchor.dataset.reportAnchor, { focus: true });
     return;
   }
   const record = currentRecord();
@@ -2832,6 +3030,16 @@ els.report.addEventListener("click", (event) => {
   if (more) {
     state.expandedQuotes.add(`${record.id}:${more.dataset.more}`);
     renderReport(record);
+    return;
+  }
+
+  const copyFingerprint = event.target.closest("[data-copy-fingerprint]");
+  if (copyFingerprint && record.fingerprint) {
+    const write = navigator.clipboard?.writeText(record.fingerprint);
+    if (write) write.then(() => {
+        copyFingerprint.textContent = "Copied";
+        window.setTimeout(() => { if (copyFingerprint.isConnected) copyFingerprint.textContent = "Copy"; }, 1400);
+      }).catch(() => {});
     return;
   }
 
@@ -2849,16 +3057,16 @@ els.report.addEventListener("click", (event) => {
 });
 
 els.report.addEventListener("keydown", (event) => {
-  const tab = event.target.closest("[data-report-tab]");
-  if (!tab || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const anchor = event.target.closest("[data-report-anchor]");
+  if (!anchor || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
   event.preventDefault();
-  const current = REPORT_TAB_ORDER.indexOf(tab.dataset.reportTab);
+  const current = REPORT_SECTION_ORDER.indexOf(anchor.dataset.reportAnchor);
   const next = event.key === "Home"
     ? 0
     : event.key === "End"
-      ? REPORT_TAB_ORDER.length - 1
-      : (current + (event.key === "ArrowRight" ? 1 : -1) + REPORT_TAB_ORDER.length) % REPORT_TAB_ORDER.length;
-  activateReportTab(REPORT_TAB_ORDER[next], { focus: true });
+      ? REPORT_SECTION_ORDER.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + REPORT_SECTION_ORDER.length) % REPORT_SECTION_ORDER.length;
+  activateReportSection(REPORT_SECTION_ORDER[next], { focus: true });
 });
 
 function onCollectionClick(event) {
@@ -2953,7 +3161,9 @@ $$(".view__title").forEach((title) => title.setAttribute("tabindex", "-1"));
 setType("text");
 updateCharCount();
 updateDetailsSummary();
+els.detailsDisclosure.open = window.matchMedia("(min-width: 901px)").matches;
 updateFlow("upload");
+showOnly(els.emptyState);
 showView(location.hash.slice(1) || "overview");
 checkServer();
 window.setInterval(() => {

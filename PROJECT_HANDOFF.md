@@ -1,6 +1,6 @@
 # Airight — project handoff
 
-Last updated: **2026-09-20**
+Last updated: **2026-09-21**
 Canonical branch: **`main`**  
 Verified commit: run `git log -1 --oneline` after `git pull --ff-only`; this handoff is maintained with `main`.
 
@@ -24,8 +24,9 @@ Airight currently includes:
 - deterministic IPR-readiness scoring, prioritized tasks, browser-local register and downloadable JSON evidence;
 - password-gated hosted detector requests and server-side provider credentials;
 - optional server-side AI or Not credential failover for provider HTTP 401/402/403 only, with no automatic retry for 429, timeout, network, 5xx, or invalid input;
-- a compact result workspace with **Findings / Action plan / Review** tabs. The long Action Plan scrolls inside its panel on desktop, so Review no longer requires scrolling through the whole report;
-- public GitHub repository import for Code: real tree/source-sample metadata plus a stable repository-ID-seeded ChatGPT/Codex/other/Human demo mix. It is explicitly illustrative, not forensic model attribution;
+- a full-width analysis composer with a populated desktop Evidence rail, spacious media/text inputs and a responsive mobile action flow;
+- a continuous one-page report with sticky **Repository / Human plan / Evidence** section navigation, no nested report scroller, compact score summary and de-duplicated actions;
+- public GitHub repository import for Code: real tree/source-sample coverage, repository profile, created/pushed/latest-commit timeline, languages, public activity and top contributors, plus a stable repository-ID-seeded ChatGPT/Codex/other/Human demo mix. It is explicitly illustrative, not forensic model attribution;
 - a separate 51% Human contribution plan with concrete code lines/files/tests, text words, image edit categories, video shots or audio seconds. Completing the task never rewrites the original model signal.
 
 Important product decision: detector scores and IPR readiness stay separate. A detector score is a review signal, never proof of authorship, infringement, ownership or legal protection.
@@ -103,14 +104,14 @@ Video is frame-level screening, not full temporal deepfake detection. Audio scre
 
 ## Last verified QA
 
-- Tracked API/import tests: **29/29 passed**, including primary/backup routing, fresh multipart bodies, no-retry failures, rate guards, secret redaction, GitHub URL/SSRF validation, deterministic mixes and exact 51% line math.
-- Admin responsive/browser regression: **9/9 passed**.
+- Tracked API/import tests: **33/33 passed**, including primary/backup routing, fresh multipart bodies, no-retry failures, rate guards, secret redaction, GitHub URL/SSRF validation, shared import deadlines, secondary-limit handling, deterministic mixes and exact 51% line math.
+- Admin responsive/browser regression: **11/11 passed**.
 - Dedicated Code-import browser flow: **5/5 passed** at **1440×900, 1024×768, 390×844 and 320×700**, including reload, export, rescan, keyboard navigation, stable rerenders and no overflow.
-- Real local end-to-end import of `Surmavanick/Airight` passed through GitHub's live REST API: 15 eligible files, 8 bounded samples, stable 100% composition and no source-code persistence in the response.
-- Report workflow passed at **1824×983, 1440×900, 1280×800, 1024×768 and 390×844**.
-- Tested: tab keyboard navigation, task rerenders/focus, internal panel scroll preservation, Review completion/reopen, evidence download, second analysis, no horizontal overflow, and no browser/page errors.
+- Real local end-to-end import of `Surmavanick/Airight` passed through GitHub's live REST API: 17 eligible files, 8 bounded samples, repository activity/contributor enrichment, stable 100% composition and no source-code persistence in the response.
+- Report workflow passed at **1440×900, 1280×800, 1024×768, 390×844 and 320×700**.
+- Tested: sticky section navigation and manual-scroll state, task rerenders/focus, Review completion/reopen, evidence download, second analysis, desktop Evidence fields, large media previews, mobile touch targets, no nested report scroll, no horizontal overflow, and no browser/page errors.
 - Production deployment and the canonical alias must be smoke-tested after every provider/environment change without making an unnecessary paid detector request.
-- The 9/9 browser harness and screenshots currently live under ignored `tmp/`; they will not arrive in a fresh clone. The zero-dependency `tests/cloud-api.test.mjs` and `tests/github-code.test.mjs` suites are tracked.
+- The browser harness and screenshots currently live under ignored `tmp/`; they will not arrive in a fresh clone. The zero-dependency `tests/cloud-api.test.mjs` and `tests/github-code.test.mjs` suites are tracked.
 
 Useful tracked check:
 
