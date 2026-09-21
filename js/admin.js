@@ -2304,7 +2304,9 @@ function protectionCard(record, status) {
   const primary =
     status === "protected"
       ? `<button class="btn btn--outline" type="button" data-action="reopen">Reopen</button>`
-      : `<button class="btn btn--maroon" type="button" data-action="protect" ${open ? "disabled" : ""}>${icon("i-shield")}Complete review</button>`;
+      : open
+        ? `<button class="btn btn--maroon" type="button" data-action="resolve-open">${icon("i-check")}Review ${plural(open, "open task")}</button>`
+        : `<button class="btn btn--maroon" type="button" data-action="protect">${icon("i-shield")}Complete review</button>`;
 
   return `
     <article class="box section-card">
@@ -3044,6 +3046,20 @@ els.report.addEventListener("click", (event) => {
   }
 
   const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "resolve-open") {
+    const firstOpen = openTasks(record)[0];
+    activateReportSection("plan", { scroll: false });
+    const taskInput = firstOpen ? document.getElementById(`task-${firstOpen.id}`) : null;
+    if (taskInput) {
+      taskInput.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "center" });
+      window.requestAnimationFrame(() => taskInput.focus({ preventScroll: true }));
+    } else {
+      const planSection = $(`[data-report-section="plan"]`, els.report);
+      planSection?.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
+      window.requestAnimationFrame(() => planSection?.focus({ preventScroll: true }));
+    }
+    return;
+  }
   if (action === "protect" && record.tasks.every((t) => t.done)) record.protectedAt = new Date().toISOString();
   if (action === "reopen") record.protectedAt = null;
   if (action === "protect" || action === "reopen") {
