@@ -2710,6 +2710,7 @@ function planCard(record) {
        <h3 class="group-title">Assigned to you</h3>
        <ul class="tasks">${record.tasks.map((task) => taskItem(record, task)).join("")}</ul>`
     : `<p class="callout callout--info">${icon("i-check")}<span>Nothing remains on the checklist. Complete the final review.</span></p>`;
+  const handledSteps = automatedSteps(record);
 
   return `
     <article class="box section-card">
@@ -2718,17 +2719,26 @@ function planCard(record) {
       </div>
       ${humanGoal}
       <div class="plan-layout">
-        <section class="plan-layout__tasks" aria-label="Your action checklist">${tasks}</section>
         <aside class="plan-layout__aside" aria-label="Automated work and Copilot guidance">
-          <div class="plan-evidence-note">
-            <span>${icon("i-check")}</span>
-            <div><strong>Evidence re-check is not a detector rerun</strong><p>OpenAI reviews the current task facts and evidence metadata only. Use “Re-check revised asset” above to submit a changed asset and receive a genuinely new detector result.</p></div>
-          </div>
-          <details class="plan-automated" ${window.matchMedia("(min-width: 701px)").matches ? "open" : ""}>
-            <summary>Handled by Aright</summary>
-            <ul class="auto-list">${automatedSteps(record).map((step) => `<li>${icon("i-check")}<span>${escapeHtml(step)}</span></li>`).join("")}</ul>
+          <details class="plan-guidance">
+            <summary>
+              <span class="plan-disclosure__label"><strong>How evidence re-check works</strong><small>Does not rerun the detector</small></span>
+              <span class="plan-disclosure__toggle" aria-hidden="true"><span class="when-closed">Read more</span><span class="when-open">Collapse</span></span>
+            </summary>
+            <div class="plan-evidence-note">
+              <span>${icon("i-check")}</span>
+              <div><strong>Evidence re-check is not a detector rerun</strong><p>OpenAI reviews the current task facts and evidence metadata only. Use “Re-check revised asset” above to submit a changed asset and receive a genuinely new detector result.</p></div>
+            </div>
+          </details>
+          <details class="plan-automated">
+            <summary>
+              <span class="plan-disclosure__label"><strong>Handled by Aright</strong><small>${plural(handledSteps.length, "automated check")} recorded</small></span>
+              <span class="plan-disclosure__toggle" aria-hidden="true"><span class="when-closed">Show all</span><span class="when-open">Collapse</span></span>
+            </summary>
+            <ul class="auto-list">${handledSteps.map((step) => `<li>${icon("i-check")}<span>${escapeHtml(step)}</span></li>`).join("")}</ul>
           </details>
         </aside>
+        <section class="plan-layout__tasks" aria-label="Your action checklist">${tasks}</section>
       </div>
     </article>`;
 }

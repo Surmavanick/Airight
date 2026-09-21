@@ -5793,38 +5793,95 @@ html {
 
 #view-analyze .plan-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.72fr);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
 #view-analyze .plan-layout__aside {
-  position: sticky;
-  top: 132px;
+  position: static;
   display: grid;
-  gap: 18px;
-  padding: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--console-line);
   border-radius: 11px;
   background: #f8f6f2;
 }
 
-#view-analyze .plan-layout__aside .group-title {
-  margin: 0;
+#view-analyze .plan-layout__aside > details {
+  min-width: 0;
 }
 
-#view-analyze .plan-layout__aside .auto-list {
-  margin: 10px 0 0;
+#view-analyze .plan-layout__aside > details + details {
+  border-left: 1px solid var(--console-line);
 }
 
+#view-analyze .plan-guidance > summary,
 #view-analyze .plan-automated > summary {
-  min-height: 36px;
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 15px;
   color: var(--ink);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   cursor: pointer;
+  list-style: none;
+}
+
+#view-analyze .plan-guidance > summary::-webkit-details-marker,
+#view-analyze .plan-automated > summary::-webkit-details-marker {
+  display: none;
+}
+
+#view-analyze .plan-guidance > summary:focus-visible,
+#view-analyze .plan-automated > summary:focus-visible {
+  outline: 3px solid var(--brand-blue-deep);
+  outline-offset: -3px;
+}
+
+#view-analyze .plan-guidance[open] > summary,
+#view-analyze .plan-automated[open] > summary {
+  border-bottom: 1px solid var(--console-line);
+}
+
+#view-analyze .plan-disclosure__label {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+#view-analyze .plan-disclosure__label strong {
+  font-size: 0.76rem;
+}
+
+#view-analyze .plan-disclosure__label small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#view-analyze .plan-disclosure__toggle {
+  flex: 0 0 auto;
+  color: var(--brand-blue-deep);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+#view-analyze .plan-disclosure__toggle .when-open {
+  display: none;
+}
+
+#view-analyze details[open] > summary .plan-disclosure__toggle .when-closed {
+  display: none;
+}
+
+#view-analyze details[open] > summary .plan-disclosure__toggle .when-open {
+  display: inline;
 }
 
 #view-analyze .plan-evidence-note {
@@ -5832,8 +5889,8 @@ html {
   grid-template-columns: 38px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--console-line);
+  padding: 15px;
+  background: var(--console-panel);
 }
 
 #view-analyze .plan-evidence-note > span {
@@ -5862,6 +5919,12 @@ html {
   color: var(--muted);
   font-size: 0.75rem;
   line-height: 1.5;
+}
+
+#view-analyze .plan-automated > .auto-list {
+  margin: 0;
+  padding: 15px;
+  background: var(--console-panel);
 }
 
 #view-analyze .task-evidence {
@@ -6367,11 +6430,37 @@ html {
   }
 
   #view-analyze .plan-layout__aside {
-    position: static;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #view-analyze .plan-layout__aside > details + details {
+    border-top: 1px solid var(--console-line);
+    border-left: 0;
   }
 
   #view-analyze .review-package__stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media print {
+  #view-analyze .plan-layout__aside {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #view-analyze .plan-guidance > summary,
+  #view-analyze .plan-automated > summary {
+    display: none;
+  }
+
+  #view-analyze .plan-guidance > .plan-evidence-note,
+  #view-analyze .plan-automated > .auto-list {
+    display: grid !important;
+  }
+
+  #view-analyze .plan-layout__aside > details + details {
+    border-top: 1px solid var(--console-line);
+    border-left: 0;
   }
 }
 
