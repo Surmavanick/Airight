@@ -27,10 +27,10 @@ Airight currently includes:
 - a full-width analysis composer with a populated desktop Evidence rail, spacious media/text inputs and a responsive mobile action flow;
 - a continuous one-page report with sticky **Repository / Human plan / Evidence** section navigation, no nested report scroller, compact score summary and de-duplicated actions;
 - modality-specific report layouts that use the full canvas for text, image, video and audio findings instead of leaving a narrow preview beside empty space;
-- optional per-task supporting-file attachments in **Review & protection**. Task completion remains self-attested and independent; attachment bytes stay in browser IndexedDB while JSON exports contain metadata and SHA-256 fingerprints only;
-- an optional OpenAI Evidence Copilot that creates detailed task steps and an editable Human-work statement, then re-checks available evidence metadata without changing detector/IPR scores or checklist state. Attachment bytes are never sent to OpenAI and Responses API calls use `store:false`;
+- optional per-task supporting-file attachments in **Review & protection**. Selecting a task checkbox does not complete it; the user must explicitly choose **Confirm done**. Attachment bytes stay in browser IndexedDB while JSON exports contain metadata and SHA-256 fingerprints only;
+- an automatically generated, AI-assisted **Aright plan** that creates detailed task steps, acceptance criteria and evidence suggestions for every task plus an editable Human-work statement, then re-checks bounded evidence metadata and that statement without changing detector/IPR scores or task completion. Attachment bytes are never sent to OpenAI and Responses API calls use `store:false`;
 - **Re-check revised asset** starts a genuine new detector run after the user supplies the edited version; task-level **Re-check evidence** is explicitly an AI review aid, not detector rescoring;
-- browser-native Print / Save PDF and a local ZIP package containing a manifest, printable HTML, attachment hashes, verification metadata and available IndexedDB file bytes. Its package fingerprint is not a digital signature or trusted timestamp;
+- a prominent Plan-level **Save report & plan as PDF** action and local ZIP package containing a manifest, full detailed Aright plan, editable statement, printable HTML, attachment hashes, verification metadata and available IndexedDB file bytes. Its package fingerprint is not a digital signature or trusted timestamp;
 - public GitHub repository import for Code: real tree/source-sample coverage, repository profile, created/pushed/latest-commit timeline, languages, public activity and top contributors, plus a stable repository-ID-seeded ChatGPT/Codex/other/Human demo mix. It is explicitly illustrative, not forensic model attribution;
 - a separate 51% Human contribution plan with concrete code lines/files/tests, text words, image edit categories, video shots or audio seconds. Completing the task never rewrites the original model signal.
 
@@ -84,7 +84,7 @@ Use the existing **`airight`** project. Production secrets already belong in Ver
 ## Secrets and data
 
 - `AIORNOT_API_KEY`, optional `AIORNOT_API_KEY_BACKUP`, `OPENAI_API_KEY`, and `ADMIN_PASSWORD` must exist only in local `.env` and Vercel encrypted environment variables.
-- `OPENAI_MODEL` defaults to `gpt-5.6-luna`; the Copilot has separate best-effort 8 RPM / 1 concurrent-call guards. It is an evidence-writing/review assistant, never a content-authorship detector.
+- `OPENAI_MODEL` defaults to `gpt-5.6-luna`; the Aright plan adapter has separate best-effort 8 RPM / 1 concurrent-call guards. It is an evidence-writing/review assistant, never a content-authorship detector.
 - `GITHUB_API_TOKEN` is optional and server-only. Public imports work without it at GitHub's lower unauthenticated rate; never paste a token into the browser or commit it.
 - The backup is attempted once only after provider 401/402/403. It is not used for timeouts, network errors, rate limits, invalid input, or provider 5xx responses because the first attempt may already be billable.
 - No credential value is recorded in this handoff or tracked source.
@@ -105,13 +105,13 @@ Use the existing **`airight`** project. Production secrets already belong in Ver
 | Audio | Disabled unless provider voice entitlement is explicitly enabled | Pinned Spectra-AASIST3 speech screening |
 | PDF/DOCX | Paste extracted text or upload TXT | Server-side PDF/DOCX/TXT extraction |
 | Code | Public GitHub tree + bounded source sample; deterministic demo mix | Same safe GitHub importer |
-| Evidence Copilot | OpenAI Responses API when configured | Same server-side OpenAI adapter when configured and access is password-gated |
+| Aright plan | OpenAI Responses API when configured | Same server-side OpenAI adapter when configured and access is password-gated |
 
 Video is frame-level screening, not full temporal deepfake detection. Audio screening is speech-only, not AI-music detection.
 
 ## Last verified QA
 
-- Tracked Node suite: **44/44 passed**, including provider failover, rate/security guards, GitHub import, OpenAI Evidence Copilot structured-output/error handling, local paid-mode access controls, and PDF/ZIP package integrity.
+- Tracked Node suite: **46/46 passed**, including provider failover, rate/security guards, GitHub import, exact Aright-plan task coverage, local paid-mode access controls, truthful legacy-completion migration, and PDF/ZIP package integrity.
 - Admin responsive/browser regression: **11/11 passed**.
 - Dedicated Code-import browser flow: **5/5 passed** at **1440×900, 1024×768, 390×844 and 320×700**, including reload, export, rescan, keyboard navigation, stable rerenders and no overflow.
 - Cross-modality report matrix: **20/20 passed** for Text, Image, Video, Audio and Code at **1440, 1024, 390 and 320 px** with no report/document overflow or browser errors.

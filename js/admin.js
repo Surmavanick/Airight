@@ -12,6 +12,7 @@ const STORED_TEXT_LIMIT = 60000;
 const QUOTES_VISIBLE = 5;
 const AUDIO_MAX_SECONDS = 60.5;
 const HUMAN_TARGET_PCT = 51;
+const ARIGHT_PLAN_SCHEMA_VERSION = 2;
 const TASK_EVIDENCE_MAX_BYTES = 20 * MB;
 const TASK_EVIDENCE_MAX_FILES = 5;
 const TASK_EVIDENCE_RECORD_MAX_BYTES = 50 * MB;
@@ -146,7 +147,9 @@ const state = {
   busy: false,
   evidenceMessages: new Map(),
   evidencePending: new Set(),
+  taskCompletionSelections: new Set(),
   copilotPending: new Set(),
+  copilotAttempted: new Set(),
   copilotMessages: new Map(),
   recheckPending: new Set(),
 };
@@ -390,6 +393,7 @@ function normalizeStoredCopilot(value, tasks = []) {
     if (normalized) rechecks[normalized.taskId] = normalized;
   });
   return {
+    schemaVersion: Math.max(0, Math.round(toNumber(value.schemaVersion) || 0)),
     model: boundedCopilotText(value.model, 120),
     responseId: boundedCopilotText(value.responseId, 160),
     generatedAt: normalizeIsoDate(value.generatedAt),
@@ -499,17 +503,23 @@ function normalizeStoredRecord(value) {
   const savedTasks = Array.isArray(value.tasks)
     ? value.tasks
         .filter((task) => task && typeof task === "object")
-        .map((task, index) => ({
-          ...task,
-          id: String(task.id || `saved-task-${index + 1}`).replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 100),
-          priority: Object.hasOwn(PRIORITY_ORDER, task.priority) ? task.priority : "high",
-          short: String(task.short || task.title || "Review this saved record"),
-          title: String(task.title || task.short || "Review this saved record"),
-          detail: String(task.detail || "Confirm the supporting evidence before completing review."),
-          done: Boolean(task.done),
-          quotes: Array.isArray(task.quotes) ? task.quotes.filter((item) => typeof item === "string") : [],
-          evidence: normalizeTaskEvidence(task.evidence),
-        }))
+        .map((task, index) => {
+          const completedAt = normalizeIsoDate(task.completedAt);
+          const previouslyMarkedDone = Boolean(task.previouslyMarkedDone || (task.done && !completedAt));
+          return {
+            ...task,
+            id: String(task.id || `saved-task-${index + 1}`).replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 100),
+            priority: Object.hasOwn(PRIORITY_ORDER, task.priority) ? task.priority : "high",
+            short: String(task.short || task.title || "Review this saved record"),
+            title: String(task.title || task.short || "Review this saved record"),
+            detail: String(task.detail || "Confirm the supporting evidence before completing review."),
+            done: Boolean(task.done && completedAt),
+            completedAt,
+            previouslyMarkedDone,
+            quotes: Array.isArray(task.quotes) ? task.quotes.filter((item) => typeof item === "string") : [],
+            evidence: normalizeTaskEvidence(task.evidence),
+          };
+        })
         .filter((task) => task.id && !seenTaskIds.has(task.id) && seenTaskIds.add(task.id))
     : [];
   const needsLegacyReview = !Array.isArray(value.tasks) || (value.tasks.length > 0 && savedTasks.length === 0);
@@ -532,6 +542,8 @@ function normalizeStoredRecord(value) {
   }
   const targetTask = humanTargetTask(value.type, humanTargetPlan(value.type, detection, { repository }));
   if (targetTask && !tasks.some((task) => task.id === "human-51")) tasks = [targetTask, ...tasks];
+  const needsReconfirmation = tasks.some((task) => task.previouslyMarkedDone);
+  const priorProtectedAt = normalizeIsoDate(value.protectedAt);
   return {
     ...value,
     id: String(value.id || newId()),
@@ -543,7 +555,8 @@ function normalizeStoredRecord(value) {
     copilot: normalizeStoredCopilot(value.copilot, tasks),
     repository,
     file: fileBacked ? { name: String(value.file?.name || value.name || "Saved asset"), size: Number(value.file?.size) || 0, mime: String(value.file?.mime || "") } : value.file || null,
-    protectedAt: needsLegacyReview ? null : value.protectedAt || null,
+    protectedAt: needsLegacyReview || needsReconfirmation ? null : priorProtectedAt || null,
+    previousReviewCompletedAt: normalizeIsoDate(value.previousReviewCompletedAt) || (needsReconfirmation ? priorProtectedAt : null),
   };
 }
 
@@ -640,6 +653,11 @@ function isEvidenceCopilotConfigured() {
   return state.server.capabilities?.evidenceCopilot === true || state.server.providers?.openai?.configured === true;
 }
 
+function isRequestServiceReady(kind) {
+  if (kind === "copilot") return Boolean(state.server.online) && isEvidenceCopilotConfigured();
+  return isServiceReady();
+}
+
 function renderCapabilityAvailability() {
   const audioButton = els.typeButtons.find((button) => button.dataset.type === "audio");
   const unavailable = isCloudService() && !isHostedAudioAvailable();
@@ -709,6 +727,7 @@ async function checkServer() {
   }
   renderConnection();
   updateCostHint();
+  ensureArightPlan(currentRecord());
 }
 
 function renderConnection() {
@@ -783,10 +802,15 @@ function renderConnection() {
 }
 
 async function postDetect(kind, body, headers = {}) {
-  if (!state.server.online || !isServiceReady()) await checkServer();
-  if (!state.server.online || !isServiceReady()) {
+  if (!state.server.online || !isRequestServiceReady(kind)) await checkServer();
+  if (!state.server.online || !isRequestServiceReady(kind)) {
     const cloud = isCloudService() || location.protocol === "https:";
-    throw new ApiError(cloud ? "The hosted detection service is not ready. Try again shortly." : "The real model service is not running. Double-click start-aright.cmd, then try again.", 0);
+    const message = kind === "copilot"
+      ? "The Aright plan service is not ready. The basic checklist remains available."
+      : cloud
+        ? "The hosted detection service is not ready. Try again shortly."
+        : "The real model service is not running. Double-click start-aright.cmd, then try again.";
+    throw new ApiError(message, 0);
   }
   if (state.server.authRequired && !state.server.authorized) {
     openUnlock();
@@ -859,13 +883,22 @@ function copilotRecordPayload(record) {
       url: boundedCopilotText(repository.url, 500),
       fullName: boundedCopilotText(repository.fullName, 200),
       description: boundedCopilotText(repository.description, 600),
-      language: boundedCopilotText(repository.language, 100),
+      language: boundedCopilotText(repository.primaryLanguage, 100),
       createdAt: repository.createdAt || null,
       updatedAt: repository.updatedAt || null,
       contributorCount: Array.isArray(repository.contributors) ? repository.contributors.length : toNumber(repository.contributorCount),
-      fileCount: toNumber(repository.fileCount),
-      sourceFileCount: toNumber(repository.sourceFileCount),
-      lines: toNumber(repository.lines || repository.totalLines),
+      fileCount: toNumber(repository.sourceFiles),
+      sourceFileCount: toNumber(repository.sourceFiles),
+      lines: toNumber(repository.estimatedLines),
+      sampledFiles: (repository.sampledFiles || []).slice(0, 8).map((item) => ({
+        path: boundedCopilotText(item.path, 500),
+        language: boundedCopilotText(item.language, 80),
+        lines: Math.max(0, Math.round(toNumber(item.lines) || 0)),
+      })),
+      contributors: (repository.contributors || []).slice(0, 12).map((item) => ({
+        login: boundedCopilotText(item.login, 80),
+        contributions: Math.max(0, Math.round(toNumber(item.contributions) || 0)),
+      })),
     } : null,
     humanTarget: target ? {
       baselineHumanPct: target.baselineHumanPct,
@@ -910,7 +943,7 @@ function localEvidenceDraft(record) {
     "",
     "Record facts",
     `- Original detector signal: ${record.detection.aiPct == null ? "not available" : `${record.detection.aiPct}% AI-class score`}`,
-    `- Checklist: ${record.tasks.length - open}/${record.tasks.length} tasks self-attested complete`,
+    `- Checklist: ${record.tasks.length - open}/${record.tasks.length} tasks explicitly confirmed complete`,
     `- Supporting files in this browser: ${attachments.length}`,
     "",
     "Evidence still to add",
@@ -955,21 +988,39 @@ function normalizeCopilotEnvelope(response, record) {
     rechecks: record.copilot?.rechecks || {},
   }, record.tasks);
   if (!normalized?.detailedPlan.length && !normalized?.evidenceDraftText && !normalized?.summary) {
-    throw new ApiError("The Evidence Copilot returned no usable plan.", 502);
+    throw new ApiError("The Aright plan service returned no usable plan.", 502);
+  }
+  const plannedTaskIds = new Set(normalized.detailedPlan.map((item) => item.taskId));
+  if (plannedTaskIds.size !== record.tasks.length || record.tasks.some((task) => !plannedTaskIds.has(task.id))) {
+    throw new ApiError("The Aright plan service returned an incomplete task plan.", 502);
   }
   return normalized;
 }
 
+function hasUsableArightPlan(record) {
+  if (record?.copilot?.schemaVersion !== ARIGHT_PLAN_SCHEMA_VERSION || !record.copilot.generatedAt || !Array.isArray(record.copilot.detailedPlan)) return false;
+  const currentTaskIds = new Set(record.tasks.map((task) => task.id));
+  const plannedTaskIds = new Set(record.copilot.detailedPlan.map((item) => item.taskId));
+  return plannedTaskIds.size === currentTaskIds.size && [...currentTaskIds].every((taskId) => plannedTaskIds.has(taskId));
+}
+
+function ensureArightPlan(record) {
+  if (!record || hasUsableArightPlan(record) || state.copilotPending.has(record.id) || state.copilotAttempted.has(record.id)) return;
+  if (!isEvidenceCopilotConfigured()) return;
+  void generateCopilotPlan(record);
+}
+
 async function generateCopilotPlan(record, { force = false, replaceDraft = false } = {}) {
   if (!record || state.copilotPending.has(record.id)) return;
-  if (!force && record.copilot?.generatedAt) return;
+  if (!force && hasUsableArightPlan(record)) return;
   if (!isEvidenceCopilotConfigured()) {
-    state.copilotMessages.set(record.id, { tone: "info", text: "Evidence Copilot is not configured. The deterministic plan and editable local starter draft remain available." });
+    state.copilotMessages.set(record.id, { tone: "info", text: "Aright plan is unavailable right now. The basic Aright checklist and editable local starter draft remain available." });
     if (state.currentId === record.id) renderReport(record);
     return;
   }
+  state.copilotAttempted.add(record.id);
   state.copilotPending.add(record.id);
-  state.copilotMessages.set(record.id, { tone: "info", text: "OpenAI is preparing a detailed plan and editable evidence draft…" });
+  state.copilotMessages.set(record.id, { tone: "info", text: "Aright is preparing the detailed plan and editable evidence draft…" });
   if (state.currentId === record.id) renderReport(record);
   try {
     const response = await postDetect("copilot", JSON.stringify({ action: "generate_plan", record: copilotRecordPayload(record) }), { "Content-Type": "application/json" });
@@ -979,19 +1030,20 @@ async function generateCopilotPlan(record, { force = false, replaceDraft = false
     record.copilot = normalizeStoredCopilot({
       ...previous,
       ...generated,
+      schemaVersion: ARIGHT_PLAN_SCHEMA_VERSION,
       evidenceDraftText: preserveDraft ? previous.evidenceDraftText : generated.evidenceDraftText || previous.evidenceDraftText,
       suggestedDraftText: preserveDraft ? generated.evidenceDraftText : "",
       draftEdited: preserveDraft,
       draftUpdatedAt: preserveDraft ? previous.draftUpdatedAt : generated.evidenceDraftText ? new Date().toISOString() : previous.draftUpdatedAt,
-      rechecks: previous.rechecks || {},
+      rechecks: {},
     }, record.tasks);
-    state.copilotMessages.set(record.id, { tone: "ok", text: "OpenAI prepared the detailed plan and evidence draft. Review and edit it before use." });
+    state.copilotMessages.set(record.id, { tone: "ok", text: "Aright prepared the detailed plan and evidence draft. Review and edit it before use." });
     saveAssets();
     renderCollections();
   } catch (error) {
     state.copilotMessages.set(record.id, {
       tone: "warning",
-      text: `${error.message || "Evidence Copilot is unavailable."} The deterministic action plan and local starter draft remain available.`,
+      text: "Aright could not prepare the detailed plan. The basic checklist and local starter draft remain available; retry when the plan service is ready.",
     });
   } finally {
     state.copilotPending.delete(record.id);
@@ -1003,26 +1055,36 @@ async function recheckTaskWithCopilot(record, task) {
   const pendingKey = `${record.id}:${task.id}`;
   if (state.recheckPending.has(pendingKey)) return;
   if (!isEvidenceCopilotConfigured()) {
-    state.copilotMessages.set(pendingKey, { tone: "info", text: "Evidence Copilot is not configured. The original detector and readiness score remain unchanged." });
+    state.copilotMessages.set(pendingKey, { tone: "info", text: "Aright evidence review is unavailable. The original detector and readiness score remain unchanged." });
     if (state.currentId === record.id) renderReport(record);
     return;
   }
   state.recheckPending.add(pendingKey);
   state.copilotMessages.delete(pendingKey);
+  const requestBasis = taskRecheckBasis(record, task);
   if (state.currentId === record.id) renderReport(record);
   try {
-    const response = await postDetect("copilot", JSON.stringify({ action: "recheck_task", record: copilotRecordPayload(record), taskId: task.id }), { "Content-Type": "application/json" });
+    const response = await postDetect("copilot", JSON.stringify({
+      action: "recheck_task",
+      record: copilotRecordPayload(record),
+      taskId: task.id,
+      evidenceStatement: boundedCopilotText(record.copilot?.evidenceDraftText, 12000),
+    }), { "Content-Type": "application/json" });
     const outer = response?.data && typeof response.data === "object" ? response.data : response;
     const source = outer?.recheck || outer?.result || outer;
     const result = normalizeCopilotRecheck({ ...source, taskId: source?.taskId || task.id, checkedAt: source?.checkedAt || new Date().toISOString() }, new Set(record.tasks.map((item) => item.id)));
-    if (!result?.rationale) throw new ApiError("The Evidence Copilot returned no usable re-check result.", 502);
+    if (!result?.rationale) throw new ApiError("The Aright evidence review returned no usable result.", 502);
+    if (requestBasis !== taskRecheckBasis(record, task)) {
+      state.copilotMessages.set(pendingKey, { tone: "info", text: "The evidence changed while Aright was reviewing it. Run Re-check evidence again for the current version." });
+      return;
+    }
     const copilot = normalizeStoredCopilot(record.copilot || {}, record.tasks) || normalizeStoredCopilot({}, record.tasks);
     copilot.rechecks = { ...(copilot.rechecks || {}), [task.id]: result };
     record.copilot = copilot;
     saveAssets();
     renderCollections();
   } catch (error) {
-    state.copilotMessages.set(pendingKey, { tone: "warning", text: `${error.message || "Re-check unavailable."} The original detector and readiness score were not changed.` });
+    state.copilotMessages.set(pendingKey, { tone: "warning", text: "Aright could not review this task's current evidence. The original detector, readiness score and completion state were not changed." });
   } finally {
     state.recheckPending.delete(pendingKey);
     if (state.currentId === record.id) renderReport(record);
@@ -2144,7 +2206,6 @@ async function runAnalysis() {
     state.currentId = record.id;
     renderCollections();
     showRecord(record, { animate: true });
-    void generateCopilotPlan(record);
     els.results.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
     window.setTimeout(focusReportHeading, motionQuery.matches ? 0 : 320);
   } catch (error) {
@@ -2641,6 +2702,27 @@ function taskRecheckResult(record, task) {
   return record.copilot?.rechecks?.[task.id] || null;
 }
 
+function clearTaskRecheck(record, taskId) {
+  if (!record?.copilot?.rechecks || !Object.hasOwn(record.copilot.rechecks, taskId)) return;
+  delete record.copilot.rechecks[taskId];
+}
+
+function clearAllTaskRechecks(record) {
+  if (record?.copilot?.rechecks) record.copilot.rechecks = {};
+}
+
+function taskRecheckBasis(record, task) {
+  return JSON.stringify({
+    taskId: task.id,
+    done: Boolean(task.done),
+    completedAt: task.completedAt || null,
+    evidence: normalizeTaskEvidence(task.evidence).map(({ id, name, size, mime, sha256, addedAt }) => ({ id, name, size, mime, sha256, addedAt })),
+    statement: boundedCopilotText(record.copilot?.evidenceDraftText, 12000),
+    planSchemaVersion: record.copilot?.schemaVersion || 0,
+    planGeneratedAt: record.copilot?.generatedAt || null,
+  });
+}
+
 function taskItem(record, task) {
   const quotes = task.quotes || [];
   const expanded = state.expandedQuotes.has(`${record.id}:${task.id}`);
@@ -2650,8 +2732,12 @@ function taskItem(record, task) {
   const recheck = taskRecheckResult(record, task);
   const recheckKey = `${record.id}:${task.id}`;
   const recheckPending = state.recheckPending.has(recheckKey);
+  const planPending = state.copilotPending.has(record.id);
   const copilotConfigured = isEvidenceCopilotConfigured();
   const recheckMessage = state.copilotMessages.get(recheckKey);
+  const completionKey = `${record.id}:${task.id}`;
+  const selectedForCompletion = !task.done && state.taskCompletionSelections.has(completionKey);
+  const previouslyMarkedDone = !task.done && Boolean(task.previouslyMarkedDone);
   const detailSections = copilotDetail ? [
     copilotDetail.why ? `<p>${escapeHtml(copilotDetail.why)}</p>` : "",
     copilotDetail.steps.length ? `<div><strong>Recommended steps</strong><ol>${copilotDetail.steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol></div>` : "",
@@ -2663,21 +2749,28 @@ function taskItem(record, task) {
       <div><strong>${escapeHtml({ supported: "Supported by the current record", partial: "Partially supported", unsupported: "Not yet supported" }[recheck.status])}</strong>${recheck.confidence == null ? "" : `<span>${Math.round(recheck.confidence)}% review confidence</span>`}</div>
       ${recheck.rationale ? `<p>${escapeHtml(recheck.rationale)}</p>` : ""}
       ${recheck.nextSteps.length ? `<ul>${recheck.nextSteps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
-      <small>AI review from ${escapeHtml(formatDate(recheck.checkedAt))}; it does not change the detector score, readiness score or task checkbox.</small>
+      <small>Aright evidence review · AI-assisted · ${escapeHtml(formatDate(recheck.checkedAt))}. It does not change the detector score, readiness score or task completion.</small>
     </div>` : recheckMessage ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(recheckMessage.tone || "info")}" role="status">${escapeHtml(recheckMessage.text)}</p>` : "";
+  const arightPlan = detailSections
+    ? `<details class="task-copilot-detail"><summary>Aright plan details</summary>${detailSections}</details>`
+    : planPending
+      ? `<div class="task-copilot-detail task-copilot-detail--pending" role="status"><strong>Aright plan</strong><p>Preparing detailed steps, acceptance criteria and useful evidence…</p></div>`
+      : "";
   return `
-    <li class="task${task.done ? " is-done" : ""}">
-      <input type="checkbox" id="task-${task.id}" data-task="${task.id}" ${task.done ? "checked" : ""} />
+    <li class="task${task.done ? " is-done" : ""}${previouslyMarkedDone ? " is-legacy-completion" : ""}">
+      <input type="checkbox" id="task-${task.id}" data-task="${task.id}" ${(task.done || selectedForCompletion) ? "checked" : ""} ${task.done ? "disabled" : ""} aria-label="${escapeHtml(`${task.done ? "Confirmed complete" : "Select for completion confirmation"}: ${task.title}`)}" />
       <div class="task__body">
         <div class="task__top">
           <label class="task__title" for="task-${task.id}">${escapeHtml(task.title)}</label>
           <div class="task__top-actions">
             <span class="prio prio--${task.priority}">${task.priority}</span>
-            <button class="task-recheck" type="button" data-recheck-task="${escapeHtml(task.id)}" ${recheckPending || !copilotConfigured ? "disabled" : ""} ${recheckPending ? "aria-busy=\"true\"" : ""} ${copilotConfigured ? "" : "title=\"Evidence Copilot is not configured\""}>${recheckPending ? "Checking evidence…" : recheck ? "Re-check evidence again" : "Re-check evidence"}</button>
+            ${task.done ? `<span class="task-completion-status">Confirmed done</span><button class="task-reopen" type="button" data-task-reopen="${escapeHtml(task.id)}">Reopen</button>` : selectedForCompletion ? `<button class="task-confirm" type="button" data-task-confirm="${escapeHtml(task.id)}">Confirm done</button>` : previouslyMarkedDone ? `<span class="task-completion-status task-completion-status--legacy">Previously marked · reconfirm</span>` : ""}
+            <button class="task-recheck" type="button" data-recheck-task="${escapeHtml(task.id)}" ${recheckPending || planPending || !copilotConfigured ? "disabled" : ""} ${recheckPending || planPending ? "aria-busy=\"true\"" : ""} ${copilotConfigured ? "" : "title=\"Aright evidence review is unavailable\""}>${recheckPending ? "Checking evidence…" : recheck ? "Re-check evidence again" : "Re-check evidence"}</button>
           </div>
         </div>
         <p class="task__detail">${escapeHtml(task.detail)}</p>
-        ${detailSections ? `<details class="task-copilot-detail" open><summary>OpenAI detailed plan</summary>${detailSections}</details>` : ""}
+        ${selectedForCompletion ? `<p class="task-completion-hint">Selected only — press “Confirm done” to count this task as complete.</p>` : previouslyMarkedDone ? `<p class="task-completion-hint task-completion-hint--legacy">This was marked done under the previous one-click workflow. Review the current criteria, then select and confirm it again.</p>` : ""}
+        ${arightPlan}
         ${visible.length ? `<ul class="task__quotes">${visible.map((q) => `<li>${escapeHtml(q)}</li>`).join("")}</ul>` : ""}
         ${hiddenCount > 0 ? `<button class="task__more" type="button" data-more="${task.id}">Show ${hiddenCount} more</button>` : ""}
         ${recheckCard}
@@ -2688,9 +2781,10 @@ function taskItem(record, task) {
 function planCard(record) {
   const total = record.tasks.length;
   const done = record.tasks.filter((task) => task.done).length;
+  const selected = record.tasks.filter((task) => !task.done && state.taskCompletionSelections.has(`${record.id}:${task.id}`)).length;
+  const legacyMarked = record.tasks.filter((task) => task.previouslyMarkedDone && !task.done).length;
   const target = humanTargetPlan(record.type, record.detection, { repository: record.repository });
   const targetDone = record.tasks.find((task) => task.id === "human-51")?.done;
-  const projected = target ? (targetDone ? target.targetHumanPct : target.baselineHumanPct) : null;
   const quantity = target
     ? record.type === "code"
       ? `${target.rewriteLines.toLocaleString()} substantive lines across ${plural(target.filesToRewrite, "file")}`
@@ -2698,28 +2792,40 @@ function planCard(record) {
     : "";
   const humanGoal = target ? `
     <section class="human-goal" aria-label="Human contribution target">
-      <div><span>Human contribution plan</span><strong>${target.baselineHumanPct}% <i aria-hidden="true">→</i> ${projected}% <i aria-hidden="true">/</i> ${target.targetHumanPct}% target</strong></div>
-      <p>${target.gapPct > 0 ? `Minimum planned work: ${escapeHtml(quantity)}. Checking the task records a self-attested plan; it does not change the original detector or demo estimate.` : "The planning baseline already reaches the 51% target. Keep the supporting versions, source files and review record."}</p>
+      <div><span>Human contribution planning target</span><strong>${target.baselineHumanPct}% baseline <i aria-hidden="true">/</i> ${target.targetHumanPct}% target${targetDone ? " · plan work confirmed" : ""}</strong></div>
+      <p>${target.gapPct > 0 ? `Minimum planned work: ${escapeHtml(quantity)}. Selecting or confirming a task never changes the measured AI/Human signal; only a revised-asset detector run can do that.` : "The planning baseline already reaches the 51% target. Keep the supporting versions, source files and review record."}</p>
       <div class="human-goal__recheck"><button class="btn btn--outline btn--compact" type="button" data-action="rescan">Re-check revised asset</button><small>Upload, paste or import the revised version to create a new detector result. This is the only re-check that can produce a new AI/Human signal.</small></div>
     </section>` : "";
   const tasks = total
     ? `<div class="progress">
-         <span>${done} of ${plural(total, "task")} done</span>
+         <span>${done} of ${plural(total, "task")} confirmed${selected ? ` · ${selected} selected` : ""}</span>
          <span class="progress__bar" aria-hidden="true"><i style="width:${(done / total) * 100}%"></i></span>
        </div>
        <h3 class="group-title">Assigned to you</h3>
        <ul class="tasks">${record.tasks.map((task) => taskItem(record, task)).join("")}</ul>`
     : `<p class="callout callout--info">${icon("i-check")}<span>Nothing remains on the checklist. Complete the final review.</span></p>`;
   const handledSteps = automatedSteps(record);
+  const planPending = state.copilotPending.has(record.id);
+  const planReady = hasUsableArightPlan(record);
+  const planMessage = state.copilotMessages.get(record.id);
+  const planStatus = planPending
+    ? `<p class="callout callout--info aright-plan-status" role="status">${icon("i-check")}<span><strong>Aright plan is being prepared.</strong> Detailed steps, acceptance criteria and evidence suggestions will appear automatically.</span></p>`
+    : !planReady
+      ? `<div class="aright-plan-status aright-plan-status--fallback"><div><strong>Basic Aright plan</strong><p>${escapeHtml(planMessage?.text || "The detailed Aright plan will be generated automatically when the plan service is ready.")}</p></div>${isEvidenceCopilotConfigured() ? `<button class="btn btn--outline btn--compact" type="button" data-copilot-generate>Retry Aright plan</button>` : ""}</div>`
+      : "";
+  const legacyNotice = legacyMarked ? `<p class="callout callout--warning legacy-completion-notice" role="status">${icon("i-alert")}<span><strong>${plural(legacyMarked, "task")} need reconfirmation.</strong> They were marked done under the earlier one-click workflow and are open under the current two-step confirmation.</span></p>` : "";
 
   return `
     <article class="box section-card">
       <div class="section-card__head">
-        <div><h2><span class="step-no">3</span>Action plan: what to fix</h2><p>Highest priority first. Checking a task records your self-attested completion. Only evidence and licence tasks can update readiness; none change the original detector or illustrative estimate.</p></div>
+        <div><h2><span class="step-no">3</span>Aright plan: what to fix</h2><p>Highest priority first. Select a task, then explicitly confirm it when the work is finished. Evidence re-check is advisory and never changes the detector or completion state.</p></div>
+        <div class="plan-export-actions"><button class="btn btn--outline btn--compact" type="button" data-report-export="print">${icon("i-text")}Save report &amp; plan as PDF</button><button class="btn btn--outline btn--compact" type="button" data-report-export="package">${icon("i-download")}Download ZIP package</button></div>
       </div>
       ${humanGoal}
+      ${legacyNotice}
+      ${planStatus}
       <div class="plan-layout">
-        <aside class="plan-layout__aside" aria-label="Automated work and Copilot guidance">
+        <aside class="plan-layout__aside" aria-label="Automated work and Aright plan guidance">
           <details class="plan-guidance">
             <summary>
               <span class="plan-disclosure__label"><strong>How evidence re-check works</strong><small>Does not rerun the detector</small></span>
@@ -2727,7 +2833,7 @@ function planCard(record) {
             </summary>
             <div class="plan-evidence-note">
               <span>${icon("i-check")}</span>
-              <div><strong>Evidence re-check is not a detector rerun</strong><p>OpenAI reviews the current task facts and evidence metadata only. Use “Re-check revised asset” above to submit a changed asset and receive a genuinely new detector result.</p></div>
+              <div><strong>Evidence re-check is not a detector rerun</strong><p>Aright reviews the current task facts, editable Human-work statement and evidence metadata only. This review is AI-assisted using OpenAI. Use “Re-check revised asset” above to submit a changed asset and receive a genuinely new detector result.</p></div>
             </div>
           </details>
           <details class="plan-automated">
@@ -2761,7 +2867,7 @@ function reviewEvidenceTask(record, task) {
   return `
     <article class="review-evidence-task">
       <div class="review-evidence-task__head">
-        <div><strong>${escapeHtml(task.title)}</strong><small>${task.done ? "Self-attested complete" : "Open task"} · ${plural(attachments.length, "file")}</small></div>
+        <div><strong>${escapeHtml(task.title)}</strong><small>${task.done ? "Confirmed complete" : "Open task"} · ${plural(attachments.length, "file")}</small></div>
         <input type="file" id="task-evidence-${escapeHtml(task.id)}" data-evidence-input="${escapeHtml(task.id)}" multiple hidden />
         <button class="task-evidence__add" type="button" aria-label="Attach optional evidence to ${escapeHtml(task.title)}" data-evidence-add="${escapeHtml(task.id)}" ${evidencePending ? "disabled aria-busy=\"true\"" : ""}>${icon("i-upload")}${evidencePending ? "Saving…" : "Attach files"}${attachments.length ? `<b aria-label="${plural(attachments.length, "attached file")}">${attachments.length}</b>` : ""}</button>
       </div>
@@ -2776,21 +2882,21 @@ function copilotDraftCard(record) {
   const configured = isEvidenceCopilotConfigured();
   const message = state.copilotMessages.get(record.id);
   const text = copilot?.evidenceDraftText || localEvidenceDraft(record);
-  const sourceLabel = copilot?.generatedAt ? `OpenAI draft · ${formatDate(copilot.generatedAt)}` : pending ? "OpenAI draft in progress" : "Local starter draft";
+  const sourceLabel = copilot?.generatedAt ? `Aright plan draft · ${formatDate(copilot.generatedAt)}` : pending ? "Aright plan draft in progress" : "Local starter draft";
   return `
     <section class="copilot-draft" aria-labelledby="copilot-draft-title">
       <div class="copilot-draft__head">
-        <div><p class="panel-kicker">Evidence Copilot</p><h3 id="copilot-draft-title">Editable Human-work statement</h3><p>${escapeHtml(sourceLabel)}. Review every claim before export.</p></div>
-        <button class="btn btn--outline copilot-draft__refresh" type="button" data-copilot-generate ${pending || !configured ? "disabled" : ""} ${pending ? "aria-busy=\"true\"" : ""}>${pending ? "Preparing…" : configured ? copilot?.generatedAt ? "Regenerate draft" : "Generate with OpenAI" : "Copilot not configured"}</button>
+        <div><p class="panel-kicker">Aright plan</p><h3 id="copilot-draft-title">Editable Human-work statement</h3><p>${escapeHtml(sourceLabel)}. AI-assisted using OpenAI; review every claim before export.</p></div>
+        <button class="btn btn--outline copilot-draft__refresh" type="button" data-copilot-generate ${pending || !configured ? "disabled" : ""} ${pending ? "aria-busy=\"true\"" : ""}>${pending ? "Preparing…" : configured ? copilot?.generatedAt ? "Refresh Aright plan" : "Generate Aright plan" : "Aright plan unavailable"}</button>
       </div>
       ${copilot?.summary ? `<p class="copilot-draft__summary">${escapeHtml(copilot.summary)}</p>` : ""}
       <label class="sr-only" for="copilot-evidence-draft-${escapeHtml(record.id)}">Editable Human-work evidence draft</label>
       <textarea id="copilot-evidence-draft-${escapeHtml(record.id)}" data-copilot-draft rows="13" spellcheck="true">${escapeHtml(text)}</textarea>
       <div class="copilot-draft__footer">
         <span data-copilot-save-status>${copilot?.draftUpdatedAt ? `Saved locally ${escapeHtml(formatDate(copilot.draftUpdatedAt))}` : "Changes save automatically in this browser."}</span>
-        <span>Attachment bytes are never sent to OpenAI; re-check sends metadata only.</span>
+        <span>Attachment bytes are never sent to the plan service; evidence review sends bounded metadata and your editable statement.</span>
       </div>
-      ${copilot?.suggestedDraftText ? `<details class="copilot-suggestion"><summary>New AI suggestion kept separately</summary><pre>${escapeHtml(copilot.suggestedDraftText)}</pre></details>` : ""}
+      ${copilot?.suggestedDraftText ? `<details class="copilot-suggestion"><summary>New Aright suggestion kept separately</summary><pre>${escapeHtml(copilot.suggestedDraftText)}</pre></details>` : ""}
       ${message ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(message.tone || "info")}" role="status">${escapeHtml(message.text)}</p>` : ""}
     </section>`;
 }
@@ -2814,7 +2920,7 @@ function protectionCard(record, status) {
   const sentence = {
     "at-risk": `${plural(open, "open task")} before the final review can be completed.`,
     action: `${plural(open, "open task")} before the final review can be completed.`,
-    review: "All checklist tasks are declared done. Review the result, then complete the workflow.",
+    review: "All checklist tasks are confirmed complete. Review the result, then complete the workflow.",
     protected: "Review complete. Keep the downloaded evidence record with the original asset.",
   }[status];
 
@@ -2848,11 +2954,12 @@ function protectionCard(record, status) {
           <dt>${record.type === "code" ? "Repository/tree fingerprint" : "SHA-256"}</dt><dd class="hash-value">${fingerprint}</dd>
           <dt>Detector</dt><dd>${detector}</dd>
           ${record.protectedAt ? `<dt>Review completed</dt><dd>${escapeHtml(formatDate(record.protectedAt))}</dd>` : ""}
+          ${record.previousReviewCompletedAt ? `<dt>Earlier workflow review</dt><dd>${escapeHtml(formatDate(record.previousReviewCompletedAt))} · reconfirmation required</dd>` : ""}
         </dl>
         <aside class="review-package" aria-label="Evidence package summary">
           <p class="panel-kicker">Evidence package</p>
           <div class="review-package__stats">
-            <span><strong>${completed}/${record.tasks.length}</strong> tasks done</span>
+            <span><strong>${completed}/${record.tasks.length}</strong> confirmed</span>
             <span><strong>${attachments.length}</strong> ${attachments.length === 1 ? "file" : "files"}</span>
             <span><strong>${evidencedTasks}</strong> tasks with files</span>
           </div>
@@ -2867,7 +2974,7 @@ function protectionCard(record, status) {
         ${copilotDraftCard(record)}
         ${reviewEvidenceSection(record)}
       </div>
-      <p class="disclaimer">Model scores are screening signals, not proof of authorship, infringement, or legal protection. Checklist completion is self-attested; the downloaded JSON is not a signed or tamper-evident legal record. IPR readiness is documentation guidance, not legal advice.</p>
+      <p class="disclaimer">Model scores are screening signals, not proof of authorship, infringement, or legal protection. A task counts only after an explicit user confirmation; that confirmation is still a user declaration, not independent proof. The downloaded JSON is not a signed or tamper-evident legal record. IPR readiness is documentation guidance, not legal advice.</p>
     </article>`;
 }
 
@@ -2987,6 +3094,7 @@ function showRecord(record, options) {
   state.currentId = record.id;
   showOnly(els.report);
   renderReport(record, options);
+  ensureArightPlan(record);
 }
 
 function focusReportHeading() {
@@ -3137,7 +3245,8 @@ function evidenceOf(record) {
   const score = scoreOf(record);
   const { detection } = record;
   const humanPlan = humanTargetPlan(record.type, detection, { repository: record.repository });
-  const targetDone = Boolean(record.tasks.find((task) => task.id === "human-51")?.done);
+  const targetTask = record.tasks.find((task) => task.id === "human-51");
+  const targetDone = Boolean(targetTask?.done && targetTask?.completedAt);
   return {
     id: record.id,
     name: record.name,
@@ -3153,6 +3262,7 @@ function evidenceOf(record) {
     scoreBreakdown: score.parts,
     status: STATUS[statusOf(record)].label,
     reviewCompletedAt: record.protectedAt,
+    previousReviewCompletedAt: record.previousReviewCompletedAt || null,
     detection: {
       detector: modelLabel(record),
       model: modelInfoOf(record),
@@ -3180,20 +3290,25 @@ function evidenceOf(record) {
     humanContributionPlan: humanPlan ? {
       ...humanPlan,
       projectedHumanPct: targetDone ? humanPlan.targetHumanPct : humanPlan.baselineHumanPct,
+      completionConfirmed: targetDone,
       selfAttestedCompletion: targetDone,
-      warning: "A planning metric; it does not alter the original detector/illustrative mix or prove authorship.",
+      warning: "A user-confirmed planning metric; it does not alter the original detector/illustrative mix or prove authorship.",
     } : null,
-    actionPlan: record.tasks.map(({ id, title, detail, priority, done, humanDeltaPct, target, evidence }) => ({
+    actionPlan: record.tasks.map(({ id, title, detail, priority, done, completedAt, previouslyMarkedDone, humanDeltaPct, target, evidence }) => ({
       id,
       title,
       detail,
       priority,
-      done,
+      done: Boolean(done && completedAt),
+      completionConfirmed: Boolean(done && completedAt),
+      completedAt: completedAt || null,
+      previouslyMarkedDone: Boolean(previouslyMarkedDone),
       humanDeltaPct: humanDeltaPct || 0,
       target: target || null,
       supportingEvidence: normalizeTaskEvidence(evidence),
     })),
     evidenceCopilot: record.copilot ? {
+      schemaVersion: record.copilot.schemaVersion || 0,
       model: record.copilot.model || null,
       responseId: record.copilot.responseId || null,
       generatedAt: record.copilot.generatedAt || null,
@@ -3203,7 +3318,7 @@ function evidenceOf(record) {
       userEdited: Boolean(record.copilot.draftEdited),
       draftUpdatedAt: record.copilot.draftUpdatedAt || null,
       rechecks: record.copilot.rechecks || {},
-      warning: "AI-generated drafting and re-checks are review aids, not proof. The original detector score and checklist declarations remain separate.",
+      warning: "Aright plan drafting and evidence reviews are AI-assisted review aids, not proof. The original detector score and user-confirmed task completion remain separate.",
     } : null,
     attachmentPolicy: "Supporting file bytes remain in this browser's IndexedDB. This JSON exports filenames, sizes, timestamps and SHA-256 hashes only.",
     rawModelRecord: record.raw,
@@ -3307,6 +3422,7 @@ async function attachTaskEvidence(record, task, files) {
     const success = unhashed ? `${plural(added, "file")} attached; SHA-256 was unavailable for ${unhashed}.` : `${plural(added, "file")} attached and fingerprinted in this browser.`;
     const note = skipped.length ? `${success} ${skipped.join("; ")}.` : success;
     setTaskEvidenceMessage(record.id, task.id, note, skipped.length ? "warning" : "ok");
+    clearTaskRecheck(record, task.id);
     saveAssets();
     renderCollections();
   } else {
@@ -3339,6 +3455,7 @@ async function removeTaskEvidence(record, task, evidenceId) {
   try {
     await deleteTaskEvidenceFile(evidenceStorageKey(record.id, task.id, evidence.id));
     task.evidence = normalizeTaskEvidence(task.evidence).filter((item) => item.id !== evidence.id);
+    clearTaskRecheck(record, task.id);
     setTaskEvidenceMessage(record.id, task.id, `${evidence.name} was removed.`, "info");
     saveAssets();
     renderCollections();
@@ -3723,13 +3840,16 @@ els.report.addEventListener("change", async (event) => {
   if (!input || !record) return;
   const task = record.tasks.find((t) => t.id === input.dataset.task);
   if (!task) return;
-  task.done = input.checked;
-  if (!task.done) record.protectedAt = null;
+  const completionKey = `${record.id}:${task.id}`;
+  if (input.checked) state.taskCompletionSelections.add(completionKey);
+  else state.taskCompletionSelections.delete(completionKey);
   state.reportTabs.set(record.id, "plan");
-  saveAssets();
   renderReport(record);
-  renderCollections();
-  $(`#task-${task.id}`)?.focus({ preventScroll: true });
+  const nextFocus = input.checked ? $(`[data-task-confirm="${task.id}"]`, els.report) : $(`#task-${task.id}`, els.report);
+  nextFocus?.focus({ preventScroll: true });
+  if (els.evidenceLive) els.evidenceLive.textContent = input.checked
+    ? `${task.title} selected. Confirm done to count it as complete.`
+    : `${task.title} selection cleared. The task remains open.`;
 });
 
 els.report.addEventListener("input", (event) => {
@@ -3741,6 +3861,7 @@ els.report.addEventListener("input", (event) => {
   copilot.draftEdited = true;
   copilot.draftUpdatedAt = new Date().toISOString();
   record.copilot = copilot;
+  clearAllTaskRechecks(record);
   const status = $("[data-copilot-save-status]", els.report);
   if (status) status.textContent = "Saving locally…";
   window.clearTimeout(copilotDraftSaveTimer);
@@ -3759,6 +3880,43 @@ els.report.addEventListener("click", (event) => {
   const record = currentRecord();
   if (!record) return;
 
+  const confirmTask = event.target.closest("[data-task-confirm]");
+  if (confirmTask) {
+    const task = record.tasks.find((item) => item.id === confirmTask.dataset.taskConfirm);
+    if (!task) return;
+    task.done = true;
+    task.completedAt = new Date().toISOString();
+    task.previouslyMarkedDone = false;
+    clearTaskRecheck(record, task.id);
+    state.taskCompletionSelections.delete(`${record.id}:${task.id}`);
+    record.protectedAt = null;
+    state.reportTabs.set(record.id, "plan");
+    saveAssets();
+    renderReport(record);
+    renderCollections();
+    $(`[data-task-reopen="${task.id}"]`, els.report)?.focus({ preventScroll: true });
+    if (els.evidenceLive) els.evidenceLive.textContent = `${task.title} confirmed complete.`;
+    return;
+  }
+
+  const reopenTask = event.target.closest("[data-task-reopen]");
+  if (reopenTask) {
+    const task = record.tasks.find((item) => item.id === reopenTask.dataset.taskReopen);
+    if (!task) return;
+    task.done = false;
+    task.completedAt = null;
+    task.previouslyMarkedDone = false;
+    clearTaskRecheck(record, task.id);
+    record.protectedAt = null;
+    state.reportTabs.set(record.id, "plan");
+    saveAssets();
+    renderReport(record);
+    renderCollections();
+    $(`#task-${task.id}`, els.report)?.focus({ preventScroll: true });
+    if (els.evidenceLive) els.evidenceLive.textContent = `${task.title} reopened.`;
+    return;
+  }
+
   const recheck = event.target.closest("[data-recheck-task]");
   if (recheck) {
     const task = record.tasks.find((item) => item.id === recheck.dataset.recheckTask);
@@ -3768,7 +3926,7 @@ els.report.addEventListener("click", (event) => {
 
   const generateCopilot = event.target.closest("[data-copilot-generate]");
   if (generateCopilot) {
-    const replaceDraft = !record.copilot?.draftEdited || window.confirm("Replace your edited statement with a new OpenAI draft? Your current text will otherwise be preserved as the active draft.");
+    const replaceDraft = !record.copilot?.draftEdited || window.confirm("Replace your edited statement with a refreshed Aright plan draft? Your current text will otherwise be preserved as the active draft.");
     void generateCopilotPlan(record, { force: true, replaceDraft });
     return;
   }

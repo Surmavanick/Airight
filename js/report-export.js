@@ -212,6 +212,8 @@
       analyzedAt: record.createdAt,
       sha256: record.fingerprint || null,
       status: record.protectedAt ? "Review complete" : "Review open",
+      reviewCompletedAt: record.protectedAt || null,
+      previousReviewCompletedAt: record.previousReviewCompletedAt || null,
       detection: {
         detector: record.detection?.model?.name || record.detection?.provider || "Recorded detector",
         aiModelScore: record.detection?.aiPct ?? null,
@@ -222,30 +224,67 @@
         title: task.title,
         detail: task.detail,
         priority: task.priority,
-        done: Boolean(task.done),
+        done: Boolean(task.done && task.completedAt),
+        completionConfirmed: Boolean(task.done && task.completedAt),
+        completedAt: task.completedAt || null,
+        previouslyMarkedDone: Boolean(task.previouslyMarkedDone),
         supportingEvidence: Array.isArray(task.evidence) ? task.evidence : [],
       })),
+      evidenceCopilot: record.copilot ? {
+        schemaVersion: record.copilot.schemaVersion || 0,
+        model: record.copilot.model || null,
+        responseId: record.copilot.responseId || null,
+        generatedAt: record.copilot.generatedAt || null,
+        summary: record.copilot.summary || null,
+        detailedPlan: Array.isArray(record.copilot.detailedPlan) ? record.copilot.detailedPlan : [],
+        editableHumanWorkStatement: record.copilot.evidenceDraftText || null,
+        userEdited: Boolean(record.copilot.draftEdited),
+        draftUpdatedAt: record.copilot.draftUpdatedAt || null,
+        rechecks: record.copilot.rechecks || {},
+      } : null,
     };
   }
 
   function reportHtml(record, evidenceRecord, packageAttachments, exportedAt) {
     const score = evidenceRecord.detection?.aiModelScore;
+    const arightPlan = Array.isArray(evidenceRecord.evidenceCopilot?.detailedPlan)
+      ? evidenceRecord.evidenceCopilot.detailedPlan
+      : [];
+    const planByTask = new Map(arightPlan.map((item) => [String(item.taskId || ""), item]));
+    const list = (title, items) => Array.isArray(items) && items.length
+      ? `<section class="task-detail"><strong>${escapeHtml(title)}</strong><ol>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol></section>`
+      : "";
     const taskRows = (record.tasks || []).map((task) => {
       const files = packageAttachments.filter((item) => item.taskId === String(task.id));
+      const detail = planByTask.get(String(task.id));
       const evidence = files.length
         ? `<ul>${files.map((item) => `<li>${escapeHtml(item.name)} — ${escapeHtml(item.packageStatus)}${item.actualSha256 ? ` — SHA-256 <code>${escapeHtml(item.actualSha256)}</code>` : ""}</li>`).join("")}</ul>`
         : "None attached";
-      return `<tr><td>${task.done ? "Done" : "Open"}</td><td><strong>${escapeHtml(task.title)}</strong><br><span>${escapeHtml(task.detail || "")}</span></td><td>${escapeHtml(task.priority || "")}</td><td>${evidence}</td></tr>`;
+      const fullPlan = detail ? `<div class="aright-plan"><b>Aright detailed plan</b>${detail.why ? `<p>${escapeHtml(detail.why)}</p>` : ""}${list("Recommended steps", detail.steps)}${list("Acceptance criteria", detail.acceptanceCriteria)}${list("Evidence to collect", detail.evidenceToCollect)}</div>` : "";
+      const confirmed = Boolean(task.done && task.completedAt);
+      const status = confirmed ? "Confirmed" : task.previouslyMarkedDone ? "Previously marked done" : "Open";
+      const statusNote = confirmed
+        ? `<small>${escapeHtml(formatDate(task.completedAt))}</small>`
+        : task.previouslyMarkedDone
+          ? `<small>Reconfirmation required under the current workflow</small>`
+          : "";
+      return `<tr><td>${status}${statusNote}</td><td><strong>${escapeHtml(task.title)}</strong><br><span>${escapeHtml(task.detail || "")}</span>${fullPlan}</td><td>${escapeHtml(task.priority || "")}</td><td>${evidence}</td></tr>`;
     }).join("");
+    const draft = evidenceRecord.evidenceCopilot?.editableHumanWorkStatement;
+    const draftSection = draft ? `<h2>Editable Human-work statement</h2><p class="note">Aright plan draft · AI-assisted using OpenAI · review every claim before use.</p><pre class="draft">${escapeHtml(draft)}</pre>` : "";
+    const planMeta = evidenceRecord.evidenceCopilot?.generatedAt
+      ? `<p class="note">Aright detailed plan generated ${escapeHtml(formatDate(evidenceRecord.evidenceCopilot.generatedAt))}${evidenceRecord.evidenceCopilot.model ? ` · model ${escapeHtml(evidenceRecord.evidenceCopilot.model)}` : ""}.</p>`
+      : `<p class="note">No generated Aright detailed plan was available at export time; the basic checklist is preserved below.</p>`;
     return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Aright evidence report — ${escapeHtml(record.id)}</title><style>
-body{font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#20211e;max-width:980px;margin:40px auto;padding:0 24px}h1{margin-bottom:4px}h2{margin-top:32px;border-bottom:1px solid #ddd;padding-bottom:8px}.meta{display:grid;grid-template-columns:180px 1fr;gap:6px 18px}.meta dt{color:#666}.meta dd{margin:0;font-weight:600}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border:1px solid #ddd;padding:10px}th{background:#f3f1ec}td span,.note{color:#666}code{font-size:11px;overflow-wrap:anywhere}@media print{body{margin:0;max-width:none}tr{break-inside:avoid}}
+body{font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#20211e;max-width:980px;margin:40px auto;padding:0 24px}h1{margin-bottom:4px}h2{margin-top:32px;border-bottom:1px solid #ddd;padding-bottom:8px}.meta{display:grid;grid-template-columns:180px 1fr;gap:6px 18px}.meta dt{color:#666}.meta dd{margin:0;font-weight:600}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border:1px solid #ddd;padding:10px}th{background:#f3f1ec}td span,.note{color:#666}td small{display:block;color:#666;margin-top:4px}.aright-plan{margin-top:12px;padding:12px;border-left:3px solid #0b526a;background:#f4f8f9}.aright-plan p{margin:6px 0}.task-detail{margin-top:9px}.task-detail strong{font-size:12px;text-transform:uppercase;letter-spacing:.04em}.task-detail ol{margin:5px 0 0;padding-left:20px}.draft{white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border:1px solid #ddd;background:#faf9f6;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}code{font-size:11px;overflow-wrap:anywhere}@media print{body{margin:0;max-width:none}tr,.aright-plan{break-inside:avoid}}
 </style></head><body>
 <header><p>ARIGHT · EVIDENCE REPORT</p><h1>${escapeHtml(record.name || "Analysis record")}</h1><p class="note">Exported ${escapeHtml(formatDate(exportedAt))}</p></header>
-<h2>Record</h2><dl class="meta"><dt>Record ID</dt><dd>${escapeHtml(record.id)}</dd><dt>Type</dt><dd>${escapeHtml(record.type)}</dd><dt>Analyzed</dt><dd>${escapeHtml(formatDate(record.createdAt))}</dd><dt>Detector signal</dt><dd>${score == null ? "Not available" : `${escapeHtml(score)}%`}</dd><dt>Original fingerprint</dt><dd><code>${escapeHtml(record.fingerprint || "Not computed")}</code></dd></dl>
-<h2>Review plan</h2><table><thead><tr><th>Status</th><th>Task</th><th>Priority</th><th>Supporting evidence</th></tr></thead><tbody>${taskRows || '<tr><td colspan="4">No tasks recorded.</td></tr>'}</tbody></table>
-<h2>Important limitation</h2><p class="note">Detector scores are screening signals, not proof of authorship, infringement, or legal protection. Checklist completion is self-attested. This local package uses SHA-256 fingerprints for integrity checking; it is not digitally signed, independently timestamped, or tamper-evident.</p>
+  <h2>Record</h2><dl class="meta"><dt>Record ID</dt><dd>${escapeHtml(record.id)}</dd><dt>Type</dt><dd>${escapeHtml(record.type)}</dd><dt>Analyzed</dt><dd>${escapeHtml(formatDate(record.createdAt))}</dd><dt>Detector signal</dt><dd>${score == null ? "Not available" : `${escapeHtml(score)}%`}</dd><dt>Original fingerprint</dt><dd><code>${escapeHtml(record.fingerprint || "Not computed")}</code></dd>${evidenceRecord.previousReviewCompletedAt ? `<dt>Earlier workflow review</dt><dd>${escapeHtml(formatDate(evidenceRecord.previousReviewCompletedAt))} · reconfirmation required</dd>` : ""}</dl>
+<h2>Aright plan</h2>${planMeta}<table><thead><tr><th>Status</th><th>Task and detailed plan</th><th>Priority</th><th>Supporting evidence</th></tr></thead><tbody>${taskRows || '<tr><td colspan="4">No tasks recorded.</td></tr>'}</tbody></table>
+${draftSection}
+<h2>Important limitation</h2><p class="note">Detector scores are screening signals, not proof of authorship, infringement, or legal protection. A task counts only after explicit user confirmation, which remains a user declaration rather than independent proof. This local package uses SHA-256 fingerprints for integrity checking; it is not digitally signed, independently timestamped, or tamper-evident.</p>
 </body></html>`;
   }
 
@@ -433,10 +472,13 @@ body{font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#20211e;max
   }
 
   function installButtons() {
-    const actions = global.document?.querySelector("#report .review-package .actions");
+    const report = global.document?.querySelector("#report");
+    if (!report) return;
+    if (report.querySelector('[data-report-export="print"]') && report.querySelector('[data-report-export="package"]')) return;
+    const actions = report.querySelector(".plan-export-actions") || report.querySelector(".summary__actions") || report.querySelector(".review-package .actions");
     if (!actions) return;
-    if (!actions.querySelector('[data-report-export="print"]')) actions.append(exportButton("print", "Print / Save PDF"));
-    if (!actions.querySelector('[data-report-export="package"]')) actions.append(exportButton("package", "Download ZIP package"));
+    if (!report.querySelector('[data-report-export="print"]')) actions.append(exportButton("print", "Save report & plan as PDF"));
+    if (!report.querySelector('[data-report-export="package"]')) actions.append(exportButton("package", "Download ZIP package"));
   }
 
   function syncPrintDrafts() {

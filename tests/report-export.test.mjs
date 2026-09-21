@@ -44,12 +44,25 @@ test("evidence package contains a printable report, hashes, verification and ava
     createdAt: "2026-09-21T08:00:00.000Z",
     fingerprint: "a".repeat(64),
     detection: { aiPct: 81, verdict: "High AI-model signal" },
+    copilot: {
+      generatedAt: "2026-09-21T08:30:00.000Z",
+      model: "gpt-test",
+      detailedPlan: [{
+        taskId: "human-review",
+        why: "The record needs a traceable human review.",
+        steps: ["Inspect the source", "Record the decision"],
+        acceptanceCriteria: ["A named reviewer signs off"],
+        evidenceToCollect: ["Review note"],
+      }],
+      evidenceDraftText: "I reviewed the source and recorded the decisions.",
+    },
     tasks: [{
       id: "human-review",
       title: "Complete a human review",
       detail: "Document the substantive decisions.",
       priority: "high",
       done: true,
+      completedAt: "2026-09-21T08:45:00.000Z",
       evidence: [
         { id: "good", name: "approval.pdf", size: goodBytes.byteLength, mime: "application/pdf", sha256: goodHash },
         { id: "changed", name: "../changed?.txt", size: mismatchBytes.byteLength, mime: "text/plain", sha256: "b".repeat(64) },
@@ -85,6 +98,10 @@ test("evidence package contains a printable report, hashes, verification and ava
   assert.equal(manifest.package.attachments.find((item) => item.id === "changed").packageStatus, "hash-mismatch");
   assert.equal(manifest.package.attachments.find((item) => item.id === "missing").packageStatus, "missing-from-browser");
   assert.match(report, /Aright evidence report/);
+  assert.match(report, /Aright detailed plan/);
+  assert.match(report, /Inspect the source/);
+  assert.match(report, /Editable Human-work statement/);
+  assert.match(report, /explicit user confirmation/i);
   assert.match(report, /not digitally signed/i);
   assert.match(hashes, /^[a-f\d]{64}  manifest\.json$/m);
   assert.match(hashes, /^[a-f\d]{64}  report\.html$/m);
@@ -122,4 +139,37 @@ test("stable downloadZip API accepts a record, evidence JSON and object-shaped a
   assert.deepEqual({ recordId: resolverInput.recordId, taskId: resolverInput.taskId, evidenceId: resolverInput.evidence.id }, { recordId: "AR-API", taskId: "review", evidenceId: "note" });
   assert.equal(result.manifest.record.custom, true);
   assert.equal(result.verification.status, "package-complete");
+});
+
+test("legacy one-click completion is exported as open and requiring reconfirmation", async () => {
+  const record = {
+    id: "AR-LEGACY",
+    name: "Legacy workflow record",
+    type: "code",
+    createdAt: "2026-09-20T08:00:00.000Z",
+    previousReviewCompletedAt: "2026-09-20T09:00:00.000Z",
+    detection: { aiPct: 71 },
+    tasks: [{
+      id: "human-51",
+      title: "Raise Human contribution",
+      detail: "Reconfirm the completed work under the current workflow.",
+      priority: "high",
+      done: false,
+      completedAt: null,
+      previouslyMarkedDone: true,
+      evidence: [],
+    }],
+  };
+
+  const result = await exporter.assembleEvidencePackage(record, { exportedAt: "2026-09-21T09:00:00.000Z" });
+  const entries = unzipStoredEntries(result.zipBytes);
+  const manifest = JSON.parse(decoder.decode(entries.get("manifest.json")));
+  const report = decoder.decode(entries.get("report.html"));
+
+  assert.equal(manifest.record.actionPlan[0].completionConfirmed, false);
+  assert.equal(manifest.record.actionPlan[0].previouslyMarkedDone, true);
+  assert.match(report, /Previously marked done/);
+  assert.match(report, /Reconfirmation required/);
+  assert.match(report, /Earlier workflow review/);
+  assert.doesNotMatch(report, /<td>Confirmed<\/td>/);
 });

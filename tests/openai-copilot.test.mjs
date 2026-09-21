@@ -97,17 +97,17 @@ function planOutput() {
         taskId: "human-51",
         title: "Document substantive manual work",
         why: "The record sets a 51% planning target and currently has no attachment for this task.",
-        steps: ["Select the named core files.", "Record reviewed diffs and behavior tests."],
-        acceptanceCriteria: ["Reviewed diffs and test results are retained."],
+        steps: ["Select the named core files.", "Rewrite the substantive decision paths without AI autocomplete.", "Record reviewed diffs and behavior tests."],
+        acceptanceCriteria: ["Reviewed diffs and test results are retained.", "A named reviewer confirms the required files and tests."],
         evidenceToCollect: ["Reviewed commit diff", "Test output", "Design note"],
       },
       {
         taskId: "licence",
         title: "Record the licence review",
         why: "The task is self-attested complete and has one attachment metadata record.",
-        steps: ["Check that the attachment identifies the applicable terms."],
-        acceptanceCriteria: ["A reviewer records the plan and relevant clauses."],
-        evidenceToCollect: ["Applicable licence terms"],
+        steps: ["Open the applicable terms.", "Identify the account plan and use restrictions.", "Record the relevant clauses and review date."],
+        acceptanceCriteria: ["A reviewer records the plan and relevant clauses.", "The retained terms identify their source and review date."],
+        evidenceToCollect: ["Applicable licence terms", "Dated reviewer note"],
       },
     ],
     evidenceDraft: {
@@ -187,6 +187,11 @@ test("generate_plan uses Responses Structured Outputs with store false and retur
   assert.equal(captured.body.text.format.type, "json_schema");
   assert.equal(captured.body.text.format.strict, true);
   assert.equal(captured.body.text.format.name, "aright_generate_plan");
+  assert.equal(captured.body.text.verbosity, "medium");
+  assert.equal(captured.body.max_output_tokens, 6_000);
+  assert.equal(captured.body.text.format.schema.properties.detailedPlan.items.properties.steps.minItems, 3);
+  assert.equal(captured.body.text.format.schema.properties.detailedPlan.items.properties.acceptanceCriteria.minItems, 2);
+  assert.equal(captured.body.text.format.schema.properties.detailedPlan.items.properties.evidenceToCollect.minItems, 2);
   assert.equal(captured.body.input[0].content[0].type, "input_text");
   assert.doesNotMatch(captured.body.input[0].content[0].text, new RegExp(env.OPENAI_API_KEY));
   assert.equal(body.action, "generate_plan");
@@ -194,6 +199,26 @@ test("generate_plan uses Responses Structured Outputs with store false and retur
   assert.equal(body.detailedPlan.length, 2);
   assert.equal(body.evidenceDraft.missingEvidence.length, 2);
   assert.equal(body.disclaimer, COPILOT_DISCLAIMER);
+  assert.doesNotMatch(text, new RegExp(env.OPENAI_API_KEY));
+});
+
+test("generate_plan rejects a partial task plan with a sanitized error", async () => {
+  const partial = planOutput();
+  partial.detailedPlan = partial.detailedPlan.slice(0, 1);
+  partial.summary = `provider detail ${env.OPENAI_API_KEY}`;
+  let calls = 0;
+  const response = await handleDetection(copilotRequest({ action: "generate_plan", record: record() }), {
+    env,
+    fetchImpl: async () => {
+      calls += 1;
+      return openAiResponse(partial);
+    },
+  });
+  const text = await response.text();
+  const body = JSON.parse(text);
+  assert.equal(calls, 1);
+  assert.equal(response.status, 502);
+  assert.equal(body.type, "OPENAI_INVALID_RESPONSE");
   assert.doesNotMatch(text, new RegExp(env.OPENAI_API_KEY));
 });
 

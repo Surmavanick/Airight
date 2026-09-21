@@ -5483,6 +5483,145 @@ html {
   }
 }
 
+/* Aright plan completion and export controls. Kept in the final cascade layer so
+   legacy compact-report rules cannot shrink or hide these primary actions. */
+#view-analyze .plan-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+#view-analyze .task-confirm,
+#view-analyze .task-reopen {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--console-line-strong);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  font: 700 0.72rem var(--sans);
+  cursor: pointer;
+}
+
+#view-analyze .task-confirm {
+  border-color: var(--green);
+  background: #f1f8f4;
+  color: #176341;
+}
+
+#view-analyze .task-reopen:hover,
+#view-analyze .task-confirm:hover {
+  filter: brightness(0.98);
+}
+
+#view-analyze .task-completion-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e8f4ed;
+  color: #176341;
+  font: 750 0.66rem var(--sans);
+}
+
+#view-analyze .task-completion-status--legacy {
+  border: 1px solid #ead5a8;
+  background: #fff8ea;
+  color: #73561c;
+}
+
+#view-analyze .task-completion-hint {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--amber);
+  background: #fff8ea;
+  color: #73561c;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+#view-analyze .task-completion-hint--legacy {
+  border-left-color: var(--console-line-strong);
+  background: var(--console-panel-subtle);
+  color: var(--muted);
+}
+
+#view-analyze .legacy-completion-notice {
+  margin: 14px 0 0;
+}
+
+#view-analyze .aright-plan-status {
+  margin: 14px 0 0;
+}
+
+#view-analyze .aright-plan-status--fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--console-line);
+  border-radius: 9px;
+  background: var(--console-panel-subtle);
+}
+
+#view-analyze .aright-plan-status--fallback p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+#view-analyze .task-copilot-detail--pending {
+  display: grid;
+  gap: 3px;
+}
+
+#view-analyze .task-copilot-detail--pending p {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  #view-analyze .section-card__head:has(.plan-export-actions) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #view-analyze .plan-export-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  #view-analyze .plan-export-actions .btn,
+  #view-analyze .task-confirm,
+  #view-analyze .task-reopen {
+    min-height: 44px;
+    justify-content: center;
+  }
+}
+
+@media print {
+  #view-analyze .plan-export-actions,
+  #view-analyze .task-confirm,
+  #view-analyze .task-reopen,
+  #view-analyze .task-recheck {
+    display: none !important;
+  }
+
+  #view-analyze .task-copilot-detail > :not(summary) {
+    display: block !important;
+  }
+
+  #view-analyze .task-copilot-detail {
+    break-inside: avoid;
+  }
+}
+
 /* ================================================================
    Analysis workspace — modality layouts and optional task evidence
    This final scoped layer intentionally wins the older compact rules.
@@ -6518,6 +6657,21 @@ html {
 
   #view-analyze .finding-layout--video .frames {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #view-analyze .task__top-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    min-width: 0;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  #view-analyze .task-recheck {
+    flex: 1 1 150px;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   #view-analyze .task-evidence__add,
