@@ -30,7 +30,7 @@ Airight currently includes:
 - optional per-task supporting-file attachments in **Review & protection**. Selecting a task checkbox does not complete it; the user must explicitly choose **Confirm done**. Attachment bytes stay in browser IndexedDB while JSON exports contain metadata and SHA-256 fingerprints only;
 - an automatically generated, AI-assisted **Aright plan** that creates detailed task steps, acceptance criteria and evidence suggestions for every task plus an editable Human-work statement, then re-checks bounded evidence metadata and that statement without changing detector/IPR scores or task completion. Attachment bytes are never sent to OpenAI and Responses API calls use `store:false`;
 - **Re-check revised asset** starts a genuine new detector run after the user supplies the edited version; task-level **Re-check evidence** is explicitly an AI review aid, not detector rescoring;
-- a prominent Plan-level **Save report & plan as PDF** action and local ZIP package containing a manifest, full detailed Aright plan, editable statement, printable HTML, attachment hashes, verification metadata and available IndexedDB file bytes. Its package fingerprint is not a digital signature or trusted timestamp;
+- a prominent Plan-level **Save report & plan as PDF** action and local evidence ZIP containing `certificate.pdf`, a manifest, full detailed Aright plan, editable statement, printable HTML, attachment hashes, verification metadata and available IndexedDB file bytes. The certificate uses a stable record-bound token, optional self-declared holder and visual Aright platform seal; it does not establish identity, authorship or ownership. Its package fingerprint is not a digital signature or trusted timestamp;
 - public GitHub repository import for Code: real tree/source-sample coverage, repository profile, created/pushed/latest-commit timeline, languages, public activity and top contributors, plus a stable repository-ID-seeded ChatGPT/Codex/other/Human demo mix. It is explicitly illustrative, not forensic model attribution;
 - a separate 51% Human contribution plan with concrete code lines/files/tests, text words, image edit categories, video shots or audio seconds. Completing the task never rewrites the original model signal.
 
@@ -111,7 +111,7 @@ Video is frame-level screening, not full temporal deepfake detection. Audio scre
 
 ## Last verified QA
 
-- Tracked Node suite: **46/46 passed**, including provider failover, rate/security guards, GitHub import, exact Aright-plan task coverage, local paid-mode access controls, truthful legacy-completion migration, and PDF/ZIP package integrity.
+- Tracked Node suite: **47/47 passed**, including provider failover, rate/security guards, GitHub import, exact Aright-plan task coverage, local paid-mode access controls, truthful legacy-completion migration, stable certificate tokens, and PDF/ZIP package integrity.
 - Admin responsive/browser regression: **11/11 passed**.
 - Dedicated Code-import browser flow: **5/5 passed** at **1440×900, 1024×768, 390×844 and 320×700**, including reload, export, rescan, keyboard navigation, stable rerenders and no overflow.
 - Cross-modality report matrix: **20/20 passed** for Text, Image, Video, Audio and Code at **1440, 1024, 390 and 320 px** with no report/document overflow or browser errors.

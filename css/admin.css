@@ -6466,6 +6466,47 @@ html {
   line-height: 1.5;
 }
 
+#view-analyze .review-certificate-claim {
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--console-line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+#view-analyze .review-certificate-claim__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+#view-analyze .review-certificate-claim__badge {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--mid-soft);
+  color: var(--amber);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#view-analyze .review-certificate-claim__help,
+#view-analyze .review-certificate-claim__status {
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+#view-analyze .review-certificate-claim__status {
+  color: var(--green);
+}
+
 #view-analyze .review-package__stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

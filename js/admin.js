@@ -485,6 +485,21 @@ const detectionTone = (detection) => {
 const iprTone = (score) => (score >= 80 ? "ok" : score >= 55 ? "mid" : "low");
 
 /* ---------- Storage ---------- */
+function normalizeCertificateClaim(value) {
+  if (!value || typeof value !== "object") return null;
+  const holderName = String(value.holderName || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  if (!holderName) return null;
+  return {
+    holderName,
+    holderType: "self-declared",
+    confirmedAt: normalizeIsoDate(value.confirmedAt) || null,
+  };
+}
+
 function normalizeStoredRecord(value) {
   if (!value || typeof value !== "object" || !["text", "image", "video", "audio", "code"].includes(value.type) || !value.detection || typeof value.detection !== "object") return null;
   const detection = {
@@ -552,6 +567,7 @@ function normalizeStoredRecord(value) {
     name: String(value.name || "Saved asset"),
     createdAt: value.createdAt || new Date().toISOString(),
     details: value.details && typeof value.details === "object" ? value.details : {},
+    certificateClaim: normalizeCertificateClaim(value.certificateClaim),
     tasks,
     detection,
     copilot: normalizeStoredCopilot(value.copilot, tasks),
@@ -2855,7 +2871,7 @@ function planCard(record) {
     <article class="box section-card">
       <div class="section-card__head">
         <div><h2><span class="step-no">3</span>Aright plan: what to fix</h2><p>Highest priority first. Select a task, then explicitly confirm it when the work is finished. Evidence re-check is advisory and never changes the detector or completion state.</p></div>
-        <div class="plan-export-actions"><button class="btn btn--outline btn--compact" type="button" data-report-export="print">${icon("i-text")}Save report &amp; plan as PDF</button><button class="btn btn--outline btn--compact" type="button" data-report-export="package">${icon("i-download")}Download ZIP package</button></div>
+        <div class="plan-export-actions"><button class="btn btn--outline btn--compact" type="button" data-report-export="print">${icon("i-text")}Save report &amp; plan as PDF</button></div>
       </div>
       ${humanGoal}
       ${legacyNotice}
@@ -2966,6 +2982,7 @@ function protectionCard(record, status) {
     ? `${escapeHtml(record.file.name)} · ${formatBytes(record.file.size)}`
     : `Pasted text · ${(record.detection.text || "").length.toLocaleString()} characters`;
   const detector = `${modelLabel(record)}${record.type === "video" ? " · sampled frames" : ""}`;
+  const certificateClaim = normalizeCertificateClaim(record.certificateClaim);
   const fingerprint = record.fingerprint
     ? `<span class="mono" title="${escapeHtml(record.fingerprint)}">${escapeHtml(compactFingerprint(record.fingerprint))}</span><button class="text-action" type="button" data-copy-fingerprint>Copy</button>`
     : `<span>Not computed (needs HTTPS or localhost, and files under 250 MB)</span>`;
@@ -2999,10 +3016,17 @@ function protectionCard(record, status) {
             <span><strong>${attachments.length}</strong> ${attachments.length === 1 ? "file" : "files"}</span>
             <span><strong>${evidencedTasks}</strong> tasks with files</span>
           </div>
-          <p>Attachments are optional and stay in this browser. JSON includes metadata and SHA-256 hashes only; the ZIP package can include locally available file bytes.</p>
+          <p>Attachments are optional and stay in this browser. JSON includes metadata and SHA-256 hashes only; the evidence package includes certificate.pdf plus locally available file bytes.</p>
+          <label class="field review-certificate-claim" for="certificate-holder-${escapeHtml(record.id)}">
+            <span class="review-certificate-claim__label"><span>Certificate holder / organization</span><span class="review-certificate-claim__badge">User-declared</span></span>
+            <input id="certificate-holder-${escapeHtml(record.id)}" type="text" maxlength="160" autocomplete="organization" data-certificate-holder value="${escapeHtml(certificateClaim?.holderName || "")}" placeholder="Name shown on the exported certificate">
+            <span class="review-certificate-claim__help">Optional. Aright records this declaration but does not verify identity, authorship or ownership.</span>
+            <span class="review-certificate-claim__status" data-certificate-claim-status aria-live="polite">${certificateClaim?.confirmedAt ? `Saved locally ${escapeHtml(formatDate(certificateClaim.confirmedAt))}` : certificateClaim ? "Saved locally in this browser." : "No holder declared."}</span>
+          </label>
           <div class="actions">
             ${primary}
-            <button class="btn btn--outline" type="button" data-action="download">${icon("i-download")}Download evidence JSON</button>
+            <button class="btn btn--outline" type="button" data-report-export="package">${icon("i-download")}Download evidence package</button>
+            <button class="btn btn--outline" type="button" data-action="download">${icon("i-download")}Download JSON metadata</button>
           </div>
         </aside>
       </div>
@@ -3292,6 +3316,7 @@ function evidenceOf(record) {
     original: record.file,
     repository: record.repository || detection.repository || null,
     sha256: record.fingerprint,
+    certificateClaim: normalizeCertificateClaim(record.certificateClaim),
     declaredDetails: record.details,
     effectiveDetails: effectiveDetails(record),
     iprScore: score.total,
@@ -3869,6 +3894,31 @@ els.report.addEventListener("change", async (event) => {
     const files = [...(evidenceInput.files || [])];
     evidenceInput.value = "";
     if (record && task && files.length) await attachTaskEvidence(record, task, files);
+    return;
+  }
+  const certificateHolder = event.target.closest("[data-certificate-holder]");
+  if (certificateHolder) {
+    const record = currentRecord();
+    if (!record) return;
+    const previous = normalizeCertificateClaim(record.certificateClaim);
+    const holderName = String(certificateHolder.value || "")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160);
+    certificateHolder.value = holderName;
+    record.certificateClaim = holderName
+      ? {
+          holderName,
+          holderType: "self-declared",
+          confirmedAt: previous?.holderName === holderName && previous.confirmedAt ? previous.confirmedAt : new Date().toISOString(),
+        }
+      : null;
+    saveAssets();
+    const status = $("[data-certificate-claim-status]", els.report);
+    if (status) status.textContent = holderName
+      ? `Saved locally ${formatDate(record.certificateClaim.confirmedAt)}`
+      : "No holder declared.";
     return;
   }
   const input = event.target.closest("[data-task]");

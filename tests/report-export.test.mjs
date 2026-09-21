@@ -44,6 +44,11 @@ test("evidence package contains a printable report, hashes, verification and ava
     createdAt: "2026-09-21T08:00:00.000Z",
     fingerprint: "a".repeat(64),
     detection: { aiPct: 81, verdict: "High AI-model signal" },
+    certificateClaim: {
+      holderName: "Example Studio LLC",
+      holderType: "self-declared",
+      confirmedAt: "2026-09-21T08:50:00.000Z",
+    },
     copilot: {
       generatedAt: "2026-09-21T08:30:00.000Z",
       model: "gpt-test",
@@ -83,6 +88,7 @@ test("evidence package contains a printable report, hashes, verification and ava
 
   assert.ok(names.includes("manifest.json"));
   assert.ok(names.includes("report.html"));
+  assert.ok(names.includes("certificate.pdf"));
   assert.ok(names.includes("hashes.sha256"));
   assert.ok(names.includes("verification.json"));
   assert.equal(names.filter((name) => name.startsWith("attachments/")).length, 2);
@@ -91,9 +97,21 @@ test("evidence package contains a printable report, hashes, verification and ava
   const manifest = JSON.parse(decoder.decode(entries.get("manifest.json")));
   const verification = JSON.parse(decoder.decode(entries.get("verification.json")));
   const report = decoder.decode(entries.get("report.html"));
+  const certificate = entries.get("certificate.pdf");
   const hashes = decoder.decode(entries.get("hashes.sha256"));
 
-  assert.equal(manifest.format, "aright-evidence-package/1");
+  assert.equal(manifest.format, "aright-evidence-package/2");
+  assert.equal(decoder.decode(certificate.subarray(0, 5)), "%PDF-");
+  assert.match(decoder.decode(certificate.slice(-32)), /%%EOF\s*$/);
+  assert.match(decoder.decode(certificate), /Visual platform seal/);
+  assert.doesNotMatch(decoder.decode(certificate), /officially belongs/i);
+  assert.equal(manifest.certificate.path, "certificate.pdf");
+  assert.equal(manifest.certificate.claim.holderName, "Example Studio LLC");
+  assert.equal(manifest.certificate.holderVerification, "self-attested");
+  assert.match(manifest.certificate.token, /^AR-CERT-[A-F\d]{24}$/);
+  assert.equal(manifest.certificate.digitalSignature, false);
+  assert.equal(manifest.certificate.qualifiedElectronicSignature, false);
+  assert.equal(manifest.certificate.qualifiedElectronicSeal, false);
   assert.equal(manifest.package.attachments.find((item) => item.id === "good").packageStatus, "included-and-matched");
   assert.equal(manifest.package.attachments.find((item) => item.id === "changed").packageStatus, "hash-mismatch");
   assert.equal(manifest.package.attachments.find((item) => item.id === "missing").packageStatus, "missing-from-browser");
@@ -105,14 +123,47 @@ test("evidence package contains a printable report, hashes, verification and ava
   assert.match(report, /not digitally signed/i);
   assert.match(hashes, /^[a-f\d]{64}  manifest\.json$/m);
   assert.match(hashes, /^[a-f\d]{64}  report\.html$/m);
+  assert.match(hashes, new RegExp(`^${await exporter.sha256(certificate)}  certificate\\.pdf$`, "m"));
   assert.equal(verification.digitalSignature, false);
+  assert.equal(verification.qualifiedElectronicSignature, false);
+  assert.equal(verification.qualifiedElectronicSeal, false);
   assert.equal(verification.trustedTimestamp, false);
+  assert.equal(verification.certificate.token, manifest.certificate.token);
+  assert.equal(verification.certificate.sha256, manifest.certificate.sha256);
   assert.equal(verification.status, "attention-required");
   assert.equal(verification.attachmentSummary.included, 2);
   assert.equal(verification.attachmentSummary.missing, 1);
   assert.equal(verification.attachmentSummary.hashMismatches, 1);
   assert.match(verification.verificationFingerprint, /^sha256:[a-f\d]{64}$/);
   assert.match(result.filename, /^aright-evidence-AR-TEST123-[a-f\d]{8}\.zip$/);
+});
+
+test("certificate token is stable across exports and changes with the declared holder", async () => {
+  const record = {
+    id: "AR-CERT-STABLE",
+    name: "ქართული ნამუშევარი (draft)",
+    type: "code",
+    createdAt: "2026-09-21T08:00:00.000Z",
+    fingerprint: "d".repeat(64),
+    detection: { aiPct: 44.4, semantics: "Illustrative URL-seeded estimate" },
+    certificateClaim: { holderName: "Example Org", holderType: "self-declared" },
+    tasks: [],
+  };
+  const evidence = { detection: { aiModelScore: 44.4, scoreSemantics: "Illustrative URL-seeded estimate" } };
+  const first = await exporter.certificateDescriptor(record, evidence, "2026-09-21T09:00:00.000Z");
+  const second = await exporter.certificateDescriptor(record, evidence, "2026-09-22T09:00:00.000Z");
+  const changed = await exporter.certificateDescriptor({
+    ...record,
+    certificateClaim: { holderName: "Another Org", holderType: "self-declared" },
+  }, evidence, "2026-09-21T09:00:00.000Z");
+
+  assert.equal(first.token, second.token);
+  assert.notEqual(first.token, changed.token);
+  assert.equal(first.signal.label, "Illustrative estimated AI-assisted share");
+  assert.equal(first.claim.holderStatus, "self-attested");
+  const pdf = await exporter.certificatePdfBytes(first);
+  assert.equal(decoder.decode(pdf.subarray(0, 5)), "%PDF-");
+  assert.match(decoder.decode(pdf.slice(-32)), /%%EOF\s*$/);
 });
 
 test("stable downloadZip API accepts a record, evidence JSON and object-shaped attachment resolver", async () => {
