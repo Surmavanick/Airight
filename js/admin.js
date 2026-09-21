@@ -1014,7 +1014,7 @@ async function generateCopilotPlan(record, { force = false, replaceDraft = false
   if (!record || state.copilotPending.has(record.id)) return;
   if (!force && hasUsableArightPlan(record)) return;
   if (!isEvidenceCopilotConfigured()) {
-    state.copilotMessages.set(record.id, { tone: "info", text: "Aright plan is unavailable right now. The basic Aright checklist and editable local starter draft remain available." });
+    state.copilotMessages.set(record.id, { tone: "info", text: "The checklist is ready. Optional detail is unavailable right now." });
     if (state.currentId === record.id) renderReport(record);
     return;
   }
@@ -1043,7 +1043,7 @@ async function generateCopilotPlan(record, { force = false, replaceDraft = false
   } catch (error) {
     state.copilotMessages.set(record.id, {
       tone: "warning",
-      text: "Aright could not prepare the detailed plan. The basic checklist and local starter draft remain available; retry when the plan service is ready.",
+      text: "The checklist is ready. Optional detail is unavailable right now.",
     });
   } finally {
     state.copilotPending.delete(record.id);
@@ -2753,9 +2753,7 @@ function taskItem(record, task) {
     </div>` : recheckMessage ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(recheckMessage.tone || "info")}" role="status">${escapeHtml(recheckMessage.text)}</p>` : "";
   const arightPlan = detailSections
     ? `<details class="task-copilot-detail"><summary>Aright plan details</summary>${detailSections}</details>`
-    : planPending
-      ? `<div class="task-copilot-detail task-copilot-detail--pending" role="status"><strong>Aright plan</strong><p>Preparing detailed steps, acceptance criteria and useful evidence…</p></div>`
-      : "";
+    : "";
   return `
     <li class="task${task.done ? " is-done" : ""}${previouslyMarkedDone ? " is-legacy-completion" : ""}">
       <input type="checkbox" id="task-${task.id}" data-task="${task.id}" ${(task.done || selectedForCompletion) ? "checked" : ""} ${task.done ? "disabled" : ""} aria-label="${escapeHtml(`${task.done ? "Confirmed complete" : "Select for completion confirmation"}: ${task.title}`)}" />
@@ -2809,9 +2807,9 @@ function planCard(record) {
   const planReady = hasUsableArightPlan(record);
   const planMessage = state.copilotMessages.get(record.id);
   const planStatus = planPending
-    ? `<p class="callout callout--info aright-plan-status" role="status">${icon("i-check")}<span><strong>Aright plan is being prepared.</strong> Detailed steps, acceptance criteria and evidence suggestions will appear automatically.</span></p>`
+    ? `<div class="aright-plan-status aright-plan-status--fallback" role="status"><div><strong>Plan ready</strong><p>The checklist is ready. Aright is adding optional detail in the background.</p></div></div>`
     : !planReady
-      ? `<div class="aright-plan-status aright-plan-status--fallback"><div><strong>Basic Aright plan</strong><p>${escapeHtml(planMessage?.text || "The detailed Aright plan will be generated automatically when the plan service is ready.")}</p></div>${isEvidenceCopilotConfigured() ? `<button class="btn btn--outline btn--compact" type="button" data-copilot-generate>Retry Aright plan</button>` : ""}</div>`
+      ? `<div class="aright-plan-status aright-plan-status--fallback" role="status"><div><strong>Plan ready</strong><p>${escapeHtml(planMessage?.text || "The checklist is ready. Optional detail is unavailable right now.")}</p></div>${isEvidenceCopilotConfigured() ? `<button class="btn btn--outline btn--compact" type="button" data-copilot-generate>Retry details</button>` : ""}</div>`
       : "";
   const legacyNotice = legacyMarked ? `<p class="callout callout--warning legacy-completion-notice" role="status">${icon("i-alert")}<span><strong>${plural(legacyMarked, "task")} need reconfirmation.</strong> They were marked done under the earlier one-click workflow and are open under the current two-step confirmation.</span></p>` : "";
 

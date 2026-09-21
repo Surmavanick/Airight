@@ -318,7 +318,7 @@ test("incomplete, refusal, missing output_text, and malformed structured JSON fa
   }
 });
 
-test("mismatched re-checks and overconfident authorship claims are rejected", async () => {
+test("mismatched re-checks are rejected and negated proof language is not misclassified", async () => {
   const wrongTask = recheckOutput();
   wrongTask.recheck.taskId = "human-51";
   const mismatch = await handleDetection(copilotRequest({ action: "recheck_task", record: record(), taskId: "licence" }), {
@@ -327,13 +327,16 @@ test("mismatched re-checks and overconfident authorship claims are rejected", as
   });
   assert.equal((await mismatch.json()).type, "OPENAI_INVALID_RESPONSE");
 
-  const unsafe = planOutput();
-  unsafe.summary = "This confirms human authorship.";
-  const claim = await handleDetection(copilotRequest({ action: "generate_plan", record: record() }), {
+  const negated = planOutput();
+  negated.summary = "This AI-generated plan does not prove human authorship.";
+  const plan = await handleDetection(copilotRequest({ action: "generate_plan", record: record() }), {
     env,
-    fetchImpl: async () => openAiResponse(unsafe),
+    fetchImpl: async () => openAiResponse(negated),
   });
-  assert.equal((await claim.json()).type, "OPENAI_UNSAFE_CLAIM");
+  const body = await plan.json();
+  assert.equal(plan.status, 200);
+  assert.equal(body.summary, negated.summary);
+  assert.equal(body.disclaimer, COPILOT_DISCLAIMER);
 });
 
 test("local paid-provider routes fail closed before body reads and require same-origin JSON", async () => {
