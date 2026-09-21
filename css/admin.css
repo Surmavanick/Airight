@@ -6507,6 +6507,19 @@ html {
   color: var(--green);
 }
 
+#view-analyze .review-certificate-claim:has(input[aria-invalid="true"]) {
+  border-color: var(--maroon);
+  box-shadow: 0 0 0 2px rgba(95, 28, 46, 0.1);
+}
+
+#view-analyze .review-certificate-claim input[aria-invalid="true"] {
+  border-color: var(--maroon);
+}
+
+#view-analyze .review-certificate-claim:has(input[aria-invalid="true"]) .review-certificate-claim__status {
+  color: var(--maroon);
+}
+
 #view-analyze .review-package__stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

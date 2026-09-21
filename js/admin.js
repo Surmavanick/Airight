@@ -500,6 +500,17 @@ function normalizeCertificateClaim(value) {
   };
 }
 
+function suggestedCertificateHolder(record) {
+  if (record?.type !== "code") return "";
+  const repository = record.repository || record.detection?.repository;
+  const owner = repository?.owner?.login || String(repository?.fullName || "").split("/")[0];
+  return String(owner || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
 function normalizeStoredRecord(value) {
   if (!value || typeof value !== "object" || !["text", "image", "video", "audio", "code"].includes(value.type) || !value.detection || typeof value.detection !== "object") return null;
   const detection = {
@@ -2983,6 +2994,17 @@ function protectionCard(record, status) {
     : `Pasted text · ${(record.detection.text || "").length.toLocaleString()} characters`;
   const detector = `${modelLabel(record)}${record.type === "video" ? " · sampled frames" : ""}`;
   const certificateClaim = normalizeCertificateClaim(record.certificateClaim);
+  const suggestedHolder = certificateClaim ? "" : suggestedCertificateHolder(record);
+  const certificateHolder = certificateClaim?.holderName || suggestedHolder;
+  const certificateBadge = certificateClaim ? "User-declared" : suggestedHolder ? "GitHub owner" : "Required";
+  const certificateHelp = suggestedHolder
+    ? "Prefilled from the public GitHub repository owner namespace. Edit it if the certificate holder should be different."
+    : "Required for certificate.pdf. Aright records it as user-declared and does not verify identity, authorship or ownership.";
+  const certificateStatus = certificateClaim?.confirmedAt
+    ? `Saved locally ${escapeHtml(formatDate(certificateClaim.confirmedAt))}`
+    : suggestedHolder
+      ? "Using public GitHub repository metadata; edit the field to replace it."
+      : "Enter the certificate holder before downloading the evidence package.";
   const fingerprint = record.fingerprint
     ? `<span class="mono" title="${escapeHtml(record.fingerprint)}">${escapeHtml(compactFingerprint(record.fingerprint))}</span><button class="text-action" type="button" data-copy-fingerprint>Copy</button>`
     : `<span>Not computed (needs HTTPS or localhost, and files under 250 MB)</span>`;
@@ -3018,10 +3040,10 @@ function protectionCard(record, status) {
           </div>
           <p>Attachments are optional and stay in this browser. JSON includes metadata and SHA-256 hashes only; the evidence package includes certificate.pdf plus locally available file bytes.</p>
           <label class="field review-certificate-claim" for="certificate-holder-${escapeHtml(record.id)}">
-            <span class="review-certificate-claim__label"><span>Certificate holder / organization</span><span class="review-certificate-claim__badge">User-declared</span></span>
-            <input id="certificate-holder-${escapeHtml(record.id)}" type="text" maxlength="160" autocomplete="organization" data-certificate-holder value="${escapeHtml(certificateClaim?.holderName || "")}" placeholder="Name shown on the exported certificate">
-            <span class="review-certificate-claim__help">Optional. Aright records this declaration but does not verify identity, authorship or ownership.</span>
-            <span class="review-certificate-claim__status" data-certificate-claim-status aria-live="polite">${certificateClaim?.confirmedAt ? `Saved locally ${escapeHtml(formatDate(certificateClaim.confirmedAt))}` : certificateClaim ? "Saved locally in this browser." : "No holder declared."}</span>
+            <span class="review-certificate-claim__label"><span>Certificate holder — full name or organization</span><span class="review-certificate-claim__badge">${escapeHtml(certificateBadge)}</span></span>
+            <input id="certificate-holder-${escapeHtml(record.id)}" type="text" maxlength="160" autocomplete="name" data-certificate-holder value="${escapeHtml(certificateHolder)}" placeholder="e.g. Nino Beridze or Example Studio LLC" required aria-describedby="certificate-holder-help-${escapeHtml(record.id)} certificate-holder-status-${escapeHtml(record.id)}">
+            <span class="review-certificate-claim__help" id="certificate-holder-help-${escapeHtml(record.id)}">${escapeHtml(certificateHelp)}</span>
+            <span class="review-certificate-claim__status" id="certificate-holder-status-${escapeHtml(record.id)}" data-certificate-claim-status aria-live="polite">${certificateStatus}</span>
           </label>
           <div class="actions">
             ${primary}
@@ -3914,11 +3936,12 @@ els.report.addEventListener("change", async (event) => {
           confirmedAt: previous?.holderName === holderName && previous.confirmedAt ? previous.confirmedAt : new Date().toISOString(),
         }
       : null;
+    if (holderName) certificateHolder.removeAttribute("aria-invalid");
     saveAssets();
     const status = $("[data-certificate-claim-status]", els.report);
     if (status) status.textContent = holderName
       ? `Saved locally ${formatDate(record.certificateClaim.confirmedAt)}`
-      : "No holder declared.";
+      : "Enter the certificate holder before downloading the evidence package.";
     return;
   }
   const input = event.target.closest("[data-task]");

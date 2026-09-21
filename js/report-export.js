@@ -214,14 +214,24 @@
 
   function normalizedCertificateClaim(record, evidenceRecord) {
     const raw = evidenceRecord?.certificateClaim || record?.certificateClaim || {};
-    const holderName = cleanCertificateText(raw.holderName, 160);
+    let holderName = cleanCertificateText(raw.holderName, 160);
+    let holderType = "self-declared";
+    let holderStatus = holderName ? "self-attested" : "not-provided";
+    if (!holderName && record?.type === "code") {
+      const repository = evidenceRecord?.repository || record?.repository || record?.detection?.repository;
+      holderName = cleanCertificateText(repository?.owner?.login || String(repository?.fullName || "").split("/")[0], 160);
+      if (holderName) {
+        holderType = "github-repository-owner";
+        holderStatus = "github-public-metadata";
+      }
+    }
     const confirmedAt = raw.confirmedAt && Number.isFinite(new Date(raw.confirmedAt).getTime())
       ? new Date(raw.confirmedAt).toISOString()
       : null;
     return {
       holderName,
-      holderType: "self-declared",
-      holderStatus: holderName ? "self-attested" : "not-provided",
+      holderType,
+      holderStatus,
       confirmedAt,
     };
   }
@@ -269,9 +279,11 @@
       analyzedAt: canonical.analyzedAt,
       claim,
       signal,
-      statement: claim.holderName
-        ? `The submitting account declared “${claim.holderName}” as the associated account or organization.`
-        : "No certificate holder or organization was declared for this record.",
+      statement: claim.holderStatus === "github-public-metadata"
+        ? `The imported public GitHub repository identifies “${claim.holderName}” as its owner namespace.`
+        : claim.holderName
+          ? `The submitting account declared “${claim.holderName}” as the associated account or organization.`
+          : "No certificate holder or organization was declared for this record.",
     };
   }
 
@@ -965,6 +977,17 @@ ${draftSection}
       announce("Open an analysis record before downloading its evidence package.");
       return;
     }
+    const holderInput = global.document.querySelector("#report [data-certificate-holder]");
+    if (holderInput && !String(holderInput.value || "").trim()) {
+      holderInput.setAttribute("aria-invalid", "true");
+      const status = holderInput.closest(".review-certificate-claim")?.querySelector("[data-certificate-claim-status]");
+      if (status) status.textContent = "Enter a full name or organization before downloading certificate.pdf.";
+      holderInput.focus({ preventScroll: true });
+      holderInput.scrollIntoView({ behavior: "smooth", block: "center" });
+      announce("Enter the certificate holder's full name or organization before downloading the evidence package.");
+      return;
+    }
+    holderInput?.removeAttribute("aria-invalid");
     const original = button.innerHTML;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");

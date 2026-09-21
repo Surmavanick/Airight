@@ -164,6 +164,16 @@ test("certificate token is stable across exports and changes with the declared h
   const pdf = await exporter.certificatePdfBytes(first);
   assert.equal(decoder.decode(pdf.subarray(0, 5)), "%PDF-");
   assert.match(decoder.decode(pdf.slice(-32)), /%%EOF\s*$/);
+
+  const github = await exporter.certificateDescriptor({
+    ...record,
+    certificateClaim: null,
+    repository: { fullName: "surmavanick/airight", owner: { login: "surmavanick", type: "User" } },
+  }, { ...evidence, repository: { fullName: "surmavanick/airight", owner: { login: "surmavanick" } } }, "2026-09-21T09:00:00.000Z");
+  assert.equal(github.claim.holderName, "surmavanick");
+  assert.equal(github.claim.holderType, "github-repository-owner");
+  assert.equal(github.claim.holderStatus, "github-public-metadata");
+  assert.match(github.statement, /public GitHub repository/i);
 });
 
 test("stable downloadZip API accepts a record, evidence JSON and object-shaped attachment resolver", async () => {
