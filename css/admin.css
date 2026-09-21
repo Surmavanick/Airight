@@ -2638,6 +2638,105 @@ html {
   }
 }
 
+/* Browser-native report printing. The same action can save a PDF through the
+   system print dialog; application chrome and interactive controls stay out. */
+.report-export__draft-print {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body.console {
+    min-width: 0;
+    background: #fff;
+    color: #20211e;
+  }
+
+  .console .side,
+  .console .topbar,
+  .console .view:not(#view-analyze),
+  #view-analyze > .view__head,
+  #view-analyze .flow,
+  #view-analyze .intake,
+  #view-analyze .report-nav,
+  #view-analyze .report .actions,
+  #view-analyze .report button,
+  #view-analyze .report input,
+  #view-analyze [data-copilot-draft],
+  #view-analyze .report > .raw,
+  .command-menu,
+  .unlock {
+    display: none !important;
+  }
+
+  #view-analyze .report-export__draft-print {
+    display: block !important;
+    min-height: 0;
+    padding: 12px 14px;
+    border: 1px solid #d8d5cf;
+    border-radius: 6px;
+    background: #fff;
+    color: #20211e;
+    font: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .console .shell,
+  .console .app-frame,
+  .console .main,
+  #view-analyze,
+  #view-analyze .workspace,
+  #view-analyze .results,
+  #view-analyze .report,
+  #view-analyze .report-workspace,
+  #view-analyze .report-sections,
+  #view-analyze .report-section {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  #view-analyze .report-summary,
+  #view-analyze .report-section > .section-card {
+    margin: 0 0 8mm !important;
+    border: 1px solid #d8d5cf !important;
+    box-shadow: none !important;
+  }
+
+  #view-analyze .section-card__head,
+  #view-analyze .meter,
+  #view-analyze .task,
+  #view-analyze .review-package,
+  #view-analyze .evidence > div,
+  #view-analyze table tr,
+  #view-analyze figure {
+    break-inside: avoid;
+  }
+
+  #view-analyze img,
+  #view-analyze video,
+  #view-analyze canvas {
+    max-width: 100% !important;
+    max-height: 100mm !important;
+    object-fit: contain;
+  }
+
+  #view-analyze a {
+    color: #20211e;
+    text-decoration: none;
+  }
+}
+
 @media (max-width: 900px) {
   #view-analyze .workspace[data-mode="composer"] .intake__foot,
   #view-analyze .workspace[data-mode="error"] .intake__foot {
@@ -5672,6 +5771,26 @@ html {
   border-top: 1px solid var(--console-line);
 }
 
+#view-analyze .human-goal__recheck {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--green) 22%, var(--console-line));
+}
+
+#view-analyze .human-goal__recheck .btn {
+  flex: 0 0 auto;
+  min-height: 36px;
+}
+
+#view-analyze .human-goal__recheck small {
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
 #view-analyze .plan-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.72fr);
@@ -5767,6 +5886,105 @@ html {
   align-items: center;
   gap: 7px;
 }
+
+#view-analyze .task-recheck {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--console-line-strong);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--brand-blue-deep);
+  font: 650 0.72rem var(--sans);
+  cursor: pointer;
+}
+
+#view-analyze .task-recheck:hover:not(:disabled) {
+  border-color: var(--brand-blue);
+  background: var(--brand-blue-soft);
+}
+
+#view-analyze .task-recheck:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+#view-analyze .task-copilot-detail {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid #d9e5e9;
+  border-radius: 8px;
+  background: #f4f8f9;
+}
+
+#view-analyze .task-copilot-detail summary {
+  color: var(--brand-blue-deep);
+  font-size: 0.72rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+#view-analyze .task-copilot-detail > p,
+#view-analyze .task-copilot-detail > div {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+#view-analyze .task-copilot-detail strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+#view-analyze .task-copilot-detail ol,
+#view-analyze .task-copilot-detail ul,
+#view-analyze .task-recheck-result ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+#view-analyze .task-recheck-result {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--console-line);
+  border-left: 3px solid var(--amber);
+  border-radius: 8px;
+  background: #fffaf0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+#view-analyze .task-recheck-result--supported {
+  border-left-color: var(--green);
+  background: #f3faf6;
+}
+
+#view-analyze .task-recheck-result--unsupported {
+  border-left-color: var(--maroon);
+  background: #fbf3f4;
+}
+
+#view-analyze .task-recheck-result > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+#view-analyze .task-recheck-result strong { color: var(--ink); }
+#view-analyze .task-recheck-result p,
+#view-analyze .task-recheck-result small { margin: 0; }
 
 #view-analyze .task > input[type="checkbox"] {
   width: 22px;
@@ -5962,8 +6180,172 @@ html {
   justify-content: center;
 }
 
-#view-analyze .review-layout + .disclaimer {
+#view-analyze .review-layout + .disclaimer,
+#view-analyze .review-support-grid + .disclaimer {
   margin-top: 18px;
+}
+
+#view-analyze .review-support-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 24px;
+  margin-top: 24px;
+}
+
+#view-analyze .copilot-draft,
+#view-analyze .review-evidence-files {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--console-line);
+  border-radius: 11px;
+  background: #fbfaf7;
+}
+
+#view-analyze .copilot-draft {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+#view-analyze .copilot-draft__head,
+#view-analyze .review-evidence-files__head,
+#view-analyze .review-evidence-task__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#view-analyze .copilot-draft__head h3,
+#view-analyze .review-evidence-files__head h3 {
+  margin: 2px 0 0;
+  font-size: 0.96rem;
+}
+
+#view-analyze .copilot-draft__head p:last-child,
+#view-analyze .review-evidence-files__head > p {
+  max-width: 54ch;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+#view-analyze .copilot-draft__refresh {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding-inline: 11px;
+  font-size: 0.7rem;
+}
+
+#view-analyze .copilot-draft__summary {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--brand-blue);
+  background: var(--brand-blue-soft);
+  color: var(--ink);
+  font-size: 0.73rem;
+  line-height: 1.5;
+}
+
+#view-analyze .copilot-draft textarea {
+  width: 100%;
+  min-height: 280px;
+  resize: vertical;
+  padding: 13px;
+  border: 1px solid var(--console-line-strong);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: 0.76rem/1.55 var(--sans);
+}
+
+#view-analyze .copilot-draft textarea:focus {
+  border-color: var(--brand-blue);
+  outline: 3px solid color-mix(in srgb, var(--brand-blue) 16%, transparent);
+}
+
+#view-analyze .copilot-draft__footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px 14px;
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
+#view-analyze .copilot-suggestion {
+  padding: 9px 11px;
+  border: 1px solid var(--console-line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+#view-analyze .copilot-suggestion summary {
+  color: var(--brand-blue-deep);
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#view-analyze .copilot-suggestion pre {
+  max-height: 220px;
+  margin: 10px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 0.68rem/1.5 var(--sans);
+}
+
+#view-analyze .review-evidence-files {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+#view-analyze .review-evidence-files__head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--console-line);
+}
+
+#view-analyze .review-evidence-files__head > p {
+  max-width: 38ch;
+  text-align: right;
+}
+
+#view-analyze .review-evidence-files__list {
+  display: grid;
+  gap: 10px;
+}
+
+#view-analyze .review-evidence-task {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--console-line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+#view-analyze .review-evidence-task__head > div {
+  min-width: 0;
+}
+
+#view-analyze .review-evidence-task__head strong,
+#view-analyze .review-evidence-task__head small {
+  display: block;
+}
+
+#view-analyze .review-evidence-task__head strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+#view-analyze .review-evidence-task__head small,
+#view-analyze .review-evidence-task__empty {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.65rem;
 }
 
 @media (min-width: 1320px) {
@@ -5979,7 +6361,8 @@ html {
 
 @media (max-width: 900px) {
   #view-analyze .plan-layout,
-  #view-analyze .review-layout {
+  #view-analyze .review-layout,
+  #view-analyze .review-support-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -6049,6 +6432,7 @@ html {
   }
 
   #view-analyze .task-evidence__add,
+  #view-analyze .task-recheck,
   #view-analyze .task-evidence__actions .text-action,
   #view-analyze [data-copy-fingerprint] {
     min-height: 44px;
@@ -6078,6 +6462,34 @@ html {
 
   #view-analyze .review-package__stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  #view-analyze .copilot-draft__head,
+  #view-analyze .review-evidence-files__head,
+  #view-analyze .review-evidence-task__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #view-analyze .human-goal__recheck {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #view-analyze .human-goal__recheck .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  #view-analyze .copilot-draft__refresh,
+  #view-analyze .review-evidence-task__head .task-evidence__add {
+    width: 100%;
+    justify-content: center;
+  }
+
+  #view-analyze .review-evidence-files__head > p {
+    max-width: none;
+    text-align: left;
   }
 }
 

@@ -14,6 +14,10 @@ The production deployment is a static site plus zero-dependency Node functions i
 - `AIORNOT_AUDIO_ENABLED` (optional): defaults to `false`. Set it to `true` only if the AI or Not account plan has the `ai_voice` model enabled. It does not affect local Spectra-AASIST3.
 - `AIORNOT_TIMEOUT_MS` (optional): provider timeout; defaults to 120000.
 - `GITHUB_API_TOKEN` (optional): server-only GitHub credential for higher public-repository API limits. The importer works without it, but GitHub's unauthenticated limit is 60 requests/hour per origin IP.
+- `OPENAI_API_KEY` (optional): server-only credential for the Evidence Copilot. It drafts detailed Human-work plans, editable evidence narratives and task re-checks; it is not a detector and never changes the original model score.
+- `OPENAI_MODEL` (optional): defaults to `gpt-5.6-luna`, the cost-sensitive Responses API model used for bounded structured output.
+- `OPENAI_TIMEOUT_MS` (optional): defaults to 45000.
+- `OPENAI_MAX_REQUESTS_PER_MINUTE` / `OPENAI_MAX_CONCURRENT` (optional): best-effort per-instance guards; default to 8 and 1. Use Vercel Firewall/provider budgets for global enforcement.
 
 Deploy from the Vercel dashboard after importing this repository, or with the CLI:
 
@@ -22,10 +26,11 @@ corepack pnpm dlx vercel link
 corepack pnpm dlx vercel env add AIORNOT_API_KEY production --sensitive
 corepack pnpm dlx vercel env add AIORNOT_API_KEY_BACKUP production --sensitive
 corepack pnpm dlx vercel env add ADMIN_PASSWORD production --sensitive
+corepack pnpm dlx vercel env add OPENAI_API_KEY production --sensitive
 corepack pnpm dlx vercel --prod
 ```
 
-Vercel environment-variable changes apply only to new deployments; redeploy after adding or rotating either credential.
+Vercel environment-variable changes apply only to new deployments; redeploy after adding or rotating any credential.
 
 After the first deployment, add a Vercel Firewall rate-limit rule for `/api/detect/(.*)` (for example 12 requests per 60 seconds per source). The code also has a small in-process guard, but that guard is only best-effort because serverless instances scale independently. Keep AI or Not account spend alerts/limits enabled, and rotate any credential that has ever been shared outside the provider dashboard. Each detector call normally consumes one metered provider attempt. Eligible credential failover consumes one additional attempt, and the in-process guard counts attempts rather than analyses.
 
@@ -46,7 +51,7 @@ powershell -ExecutionPolicy Bypass -File .\setup-models.ps1
 node server.js
 ```
 
-Node 18+ and Python 3.12 are required. The first setup downloads roughly 1 GB of model data into the normal Hugging Face cache. Model weights load lazily and remain in one persistent worker process while the server is running. To enable the external image check, copy `.env.example` to `.env`, set `AIORNOT_API_KEY`, optionally set the independently issued `AIORNOT_API_KEY_BACKUP`, and restart Aright.
+Node 18+ and Python 3.12 are required. The first setup downloads roughly 1 GB of model data into the normal Hugging Face cache. Model weights load lazily and remain in one persistent worker process while the server is running. To enable the external image check, copy `.env.example` to `.env`, set `AIORNOT_API_KEY`, optionally set the independently issued `AIORNOT_API_KEY_BACKUP`, and restart Aright. Set `OPENAI_API_KEY` in the same ignored file to enable the Evidence Copilot; the key is never sent to the browser or Python worker.
 
 Opening `admin/index.html` directly is supported only as a local-only UI fallback: real analysis still needs `node server.js`. When the paid AI or Not key is configured, `file://` API access is deliberately rejected; use the same-origin HTTP console to prevent opaque-origin pages from spending provider credits. The server intentionally returns no directory listing for `/admin/`. If `PORT` is changed, the launcher reads it from `.env`. The normal HTTP console discovers its own origin automatically.
 
@@ -70,7 +75,9 @@ Local launcher runtime:
 
 Every modality also receives a separate **51% Human contribution plan**. For code, Aright calculates concrete substantive lines, core files and behavior tests to hand-write; text uses words, images use traceable edit categories, video uses screened shots, and audio uses recorded/edited seconds. This is a self-attested planning target and never changes the original detector signal or proves authorship.
 
-Every evidence export records the model ID, revision, raw model response, score semantics, SHA-256 asset fingerprint where available, and the action-plan state. Each checklist task can also hold optional supporting files such as licences, approvals, source files, or before/after exports. File bytes stay in that browser's IndexedDB; `localStorage` and downloaded JSON retain only bounded metadata and SHA-256 fingerprints. Adding or removing a file never checks or unchecks the task. Hosted evidence also records the runtime credential slot, attempt count, failover flag, and normalized reason code; these are execution roles, never key material, prefixes, hashes, or provider credential bodies. See `THIRD_PARTY_NOTICES.md` for exact licenses, revisions, hashes, and the audio-model licensing caveat.
+When `OPENAI_API_KEY` is configured, the **Evidence Copilot** enriches that deterministic plan with bounded, structured recommendations and prepares an editable evidence statement from facts already present in the report. `Re-check` reviews a task's declared state and attachment metadata as supported, partial or unsupported; it never checks the task, changes the detector score or turns a draft into proof. Attachment bytes remain in IndexedDB and are not sent to OpenAI. Requests use the Responses API with `store: false`; provider processing and the OpenAI API data policy still apply.
+
+Every evidence export records the model ID, revision, raw model response, score semantics, SHA-256 asset fingerprint where available, and the action-plan state. Each checklist task can also hold optional supporting files such as licences, approvals, source files, or before/after exports. File bytes stay in that browser's IndexedDB; `localStorage` and the standalone JSON retain only bounded metadata and SHA-256 fingerprints. The browser-built ZIP can include the IndexedDB file bytes alongside `manifest.json`, `report.html`, `hashes.sha256` and `verification.json`. Adding or removing a file never checks or unchecks the task. Hosted evidence also records the runtime credential slot, attempt count, failover flag, and normalized reason code; these are execution roles, never key material, prefixes, hashes, or provider credential bodies. See `THIRD_PARTY_NOTICES.md` for exact licenses, revisions, hashes, and the audio-model licensing caveat.
 
 Detector scores are screening signals, not calibrated proof of authorship or infringement. The IPR score measures readiness for review based on model signals plus declared human work, provenance, and license clarity; it is not legal advice.
 
@@ -78,7 +85,7 @@ Detector scores are screening signals, not calibrated proof of authorship or inf
 
 The local Node/Python service binds to `127.0.0.1`. Text, documents, and speech are processed by the self-hosted worker. When `AIORNOT_API_KEY` is configured, image bytes and sampled video frames are also sent to AI or Not for external inference; `AIORNOT_API_KEY_BACKUP` is optional and never enables the provider by itself. The hosted runtime sends text, images and sampled frames to AI or Not; it sends voice audio only when `AIORNOT_AUDIO_ENABLED=true`. The vendor states uploads are deleted after inference, but its privacy policy and account billing still apply. Aright does not save uploaded bytes server-side.
 
-Reports and workflow state are stored in the browser's `localStorage`; optional supporting-file bytes are stored separately in IndexedDB and are not embedded in JSON exports. Download the JSON manifest and separately retain the original supporting files for a durable package. Browser storage is unencrypted, per-browser, user-editable, and not a tamper-evident evidence vault or multi-user security boundary.
+Reports and workflow state are stored in the browser's `localStorage`; optional supporting-file bytes are stored separately in IndexedDB and are not embedded in JSON exports. The printable report can be saved as PDF through the browser. The evidence-package download is a local ZIP containing a manifest, human-readable report, attachment hashes, verification metadata and any locally stored supporting files. Its package fingerprint helps detect accidental changes; it is not a trusted timestamp, signer identity, digital signature or tamper-evident evidence vault. Browser storage remains unencrypted, per-browser and user-editable.
 
 Copy `.env.example` to `.env` and set `ADMIN_PASSWORD` to gate the console UI and model requests on this computer. The UI fails closed until the service confirms access and hides/unloads report rows again if the service becomes unreachable. Browser `localStorage` itself is still not encrypted server storage or a multi-user security boundary; anyone with access to that browser profile can inspect it. Use an appropriate OS account/browser profile and do not expose this prototype directly to the public internet.
 
@@ -88,13 +95,15 @@ Copy `.env.example` to `.env` and set `ADMIN_PASSWORD` to gate the console UI an
 - `admin/index.html`, `css/admin.css`, `js/admin.js`: console UI and evidence workflow
 - `api/status.mjs`, `api/detect/[kind].mjs`, `lib/cloud-api.mjs`, `vercel.json`: hosted Vercel provider proxy
 - `lib/github-code.mjs`: validated public-GitHub importer and deterministic illustrative repository mix
+- `lib/openai-copilot.mjs`: bounded Responses API adapter for editable plans, evidence drafts and task re-checks
+- `js/report-export.js`: browser-side printable/PDF and ZIP evidence-package helpers
 - `server.js`: zero-package Node static/API server and persistent worker manager
 - `ml_worker.py`: pinned text, image, and speech model adapters
 - `requirements-ml.txt`, `verify_environment.py`, `setup-models.ps1`, `start-aright.ps1`, `start-aright.cmd`: exact direct dependency checks, versioned setup fingerprint, verified model artifacts, health-checked one-command launch
 - `THIRD_PARTY_NOTICES.md`: model provenance, revisions, hashes, licenses, and limitations
 - `licenses/`, `assets/fonts/OFL-*.txt`: bundled upstream model and font license texts
 - `Airight.pdf`: source product presentation
-- `tests/cloud-api.test.mjs`, `tests/github-code.test.mjs`: mocked hosted-provider, credential-failover and GitHub-import contract tests
+- `tests/cloud-api.test.mjs`, `tests/github-code.test.mjs`, `tests/openai-copilot.test.mjs`, `tests/report-export.test.mjs`: mocked provider, credential-failover, GitHub-import, Evidence Copilot, and report-package contract tests
 
 ## Contact form
 

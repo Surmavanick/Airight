@@ -146,9 +146,13 @@ const state = {
   busy: false,
   evidenceMessages: new Map(),
   evidencePending: new Set(),
+  copilotPending: new Set(),
+  copilotMessages: new Map(),
+  recheckPending: new Set(),
 };
 
 let evidenceDbPromise = null;
+let copilotDraftSaveTimer = null;
 
 class ApiError extends Error {
   constructor(message, status, raw) {
@@ -335,6 +339,74 @@ function normalizeTaskEvidence(value) {
     .slice(0, TASK_EVIDENCE_MAX_FILES);
 }
 
+function boundedCopilotText(value, limit = 2400) {
+  return typeof value === "string" ? value.trim().slice(0, limit) : "";
+}
+
+function boundedCopilotList(value, limit = 8, itemLimit = 500) {
+  return Array.isArray(value)
+    ? value.map((item) => boundedCopilotText(item, itemLimit)).filter(Boolean).slice(0, limit)
+    : [];
+}
+
+function normalizeCopilotRecheck(value, taskIds = new Set()) {
+  if (!value || typeof value !== "object") return null;
+  const taskId = String(value.taskId || "").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 100);
+  if (!taskId || (taskIds.size && !taskIds.has(taskId))) return null;
+  const status = ["supported", "partial", "unsupported"].includes(value.status) ? value.status : "partial";
+  const rawConfidence = toNumber(value.confidence);
+  return {
+    taskId,
+    status,
+    confidence: rawConfidence == null ? null : clamp(rawConfidence <= 1 ? rawConfidence * 100 : rawConfidence, 0, 100),
+    rationale: boundedCopilotText(value.rationale || value.summary, 1200),
+    nextSteps: boundedCopilotList(value.nextSteps || value.next_steps, 6, 400),
+    checkedAt: normalizeIsoDate(value.checkedAt || value.generatedAt) || new Date().toISOString(),
+  };
+}
+
+function normalizeStoredCopilot(value, tasks = []) {
+  if (!value || typeof value !== "object") return null;
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const planItems = Array.isArray(value.detailedPlan) ? value.detailedPlan : Array.isArray(value.tasks) ? value.tasks : [];
+  const detailedPlan = planItems.map((item, index) => {
+    if (!item || typeof item !== "object") return null;
+    const fallbackTask = tasks[index];
+    const taskId = String(item.taskId || item.id || fallbackTask?.id || "").replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 100);
+    if (!taskId || (taskIds.size && !taskIds.has(taskId))) return null;
+    return {
+      taskId,
+      title: boundedCopilotText(item.title, 240),
+      why: boundedCopilotText(item.why || item.detail || item.rationale, 900),
+      steps: boundedCopilotList(item.steps, 8, 500),
+      acceptanceCriteria: boundedCopilotList(item.acceptanceCriteria || item.acceptance_criteria, 8, 500),
+      evidenceToCollect: boundedCopilotList(item.evidenceToCollect || item.evidence_to_collect, 8, 500),
+    };
+  }).filter(Boolean).slice(0, Math.max(tasks.length, 12));
+  const sourceRechecks = value.rechecks && typeof value.rechecks === "object" ? Object.values(value.rechecks) : [];
+  const rechecks = {};
+  sourceRechecks.forEach((item) => {
+    const normalized = normalizeCopilotRecheck(item, taskIds);
+    if (normalized) rechecks[normalized.taskId] = normalized;
+  });
+  return {
+    model: boundedCopilotText(value.model, 120),
+    responseId: boundedCopilotText(value.responseId, 160),
+    generatedAt: normalizeIsoDate(value.generatedAt),
+    summary: boundedCopilotText(value.summary, 1200),
+    detailedPlan,
+    evidenceDraftTitle: boundedCopilotText(value.evidenceDraftTitle, 240),
+    evidenceDraftText: boundedCopilotText(value.evidenceDraftText, 12000),
+    suggestedDraftText: boundedCopilotText(value.suggestedDraftText, 12000),
+    draftEdited: Boolean(value.draftEdited),
+    draftUpdatedAt: normalizeIsoDate(value.draftUpdatedAt),
+    factsUsed: boundedCopilotList(value.factsUsed, 12, 500),
+    missingEvidence: boundedCopilotList(value.missingEvidence, 12, 500),
+    warnings: boundedCopilotList(value.warnings, 8, 500),
+    rechecks,
+  };
+}
+
 function evidenceStorageKey(recordId, taskId, evidenceId) {
   return `${recordId}:${taskId}:${evidenceId}`;
 }
@@ -468,6 +540,7 @@ function normalizeStoredRecord(value) {
     details: value.details && typeof value.details === "object" ? value.details : {},
     tasks,
     detection,
+    copilot: normalizeStoredCopilot(value.copilot, tasks),
     repository,
     file: fileBacked ? { name: String(value.file?.name || value.name || "Saved asset"), size: Number(value.file?.size) || 0, mime: String(value.file?.mime || "") } : value.file || null,
     protectedAt: needsLegacyReview ? null : value.protectedAt || null,
@@ -561,6 +634,10 @@ function isCloudService() {
 function isHostedAudioAvailable() {
   if (!isCloudService()) return true;
   return state.server.capabilities?.audioSpeech === true && state.server.providers?.audio?.configured === true;
+}
+
+function isEvidenceCopilotConfigured() {
+  return state.server.capabilities?.evidenceCopilot === true || state.server.providers?.openai?.configured === true;
 }
 
 function renderCapabilityAvailability() {
@@ -739,6 +816,218 @@ const detectUpload = (kind, blob, name, extraHeaders = {}) =>
     "X-File-Name": encodeURIComponent(name),
     ...extraHeaders,
   });
+
+function copilotRecordPayload(record) {
+  const target = humanTargetPlan(record.type, record.detection, { repository: record.repository });
+  const repository = record.repository || record.detection.repository;
+  return {
+    id: boundedCopilotText(record.id, 100),
+    type: record.type,
+    name: boundedCopilotText(record.name, 240),
+    createdAt: record.createdAt,
+    details: {
+      human: boundedCopilotText(record.details?.human, 40),
+      use: boundedCopilotText(record.details?.use, 40),
+      license: boundedCopilotText(record.details?.license, 40),
+      provenance: Boolean(record.details?.provenance),
+      tool: boundedCopilotText(record.details?.tool, 160),
+    },
+    file: record.file ? {
+      name: boundedCopilotText(record.file.name, 240),
+      size: Math.max(0, Number(record.file.size) || 0),
+      mime: boundedCopilotText(record.file.mime, 120),
+    } : null,
+    fingerprint: boundedCopilotText(record.fingerprint, 128),
+    detection: {
+      checked: Boolean(record.detection.checked),
+      aiPct: toNumber(record.detection.aiPct),
+      verdict: boundedCopilotText(record.detection.verdict, 240),
+      policyVerdict: boundedCopilotText(record.detection.policyVerdict, 80),
+      providerVerdict: boundedCopilotText(record.detection.providerVerdict, 80),
+      disagreement: Boolean(record.detection.disagreement),
+      model: boundedCopilotText(record.detection.model?.id || record.detection.model?.name || modelLabel(record), 160),
+      generatorHints: Array.isArray(record.detection.generators)
+        ? record.detection.generators.slice(0, 8).map((item) => ({
+            name: boundedCopilotText(item?.name || item?.label || item, 120),
+            score: toNumber(item?.score ?? item?.probability ?? item?.value),
+          }))
+        : [],
+      frameCount: Array.isArray(record.detection.frames) ? record.detection.frames.length : 0,
+      flaggedPassageCount: Number(record.detection.flaggedTotal ?? record.detection.flagged?.length) || 0,
+    },
+    repository: repository ? {
+      url: boundedCopilotText(repository.url, 500),
+      fullName: boundedCopilotText(repository.fullName, 200),
+      description: boundedCopilotText(repository.description, 600),
+      language: boundedCopilotText(repository.language, 100),
+      createdAt: repository.createdAt || null,
+      updatedAt: repository.updatedAt || null,
+      contributorCount: Array.isArray(repository.contributors) ? repository.contributors.length : toNumber(repository.contributorCount),
+      fileCount: toNumber(repository.fileCount),
+      sourceFileCount: toNumber(repository.sourceFileCount),
+      lines: toNumber(repository.lines || repository.totalLines),
+    } : null,
+    humanTarget: target ? {
+      baselineHumanPct: target.baselineHumanPct,
+      targetHumanPct: target.targetHumanPct,
+      gapPct: target.gapPct,
+      rewriteUnits: target.rewriteUnits,
+      totalUnits: target.totalUnits,
+      unit: target.unit,
+      rewriteLines: target.rewriteLines,
+      filesToRewrite: target.filesToRewrite,
+      testsToWrite: target.testsToWrite,
+    } : null,
+    tasks: record.tasks.slice(0, 20).map((task) => ({
+      id: task.id,
+      title: boundedCopilotText(task.title, 240),
+      detail: boundedCopilotText(task.detail, 1200),
+      priority: task.priority,
+      done: Boolean(task.done),
+      evidence: normalizeTaskEvidence(task.evidence).map((item) => ({
+        name: item.name,
+        size: item.size,
+        mime: item.mime,
+        sha256: item.sha256,
+        addedAt: item.addedAt,
+      })),
+    })),
+  };
+}
+
+function localEvidenceDraft(record) {
+  const open = openTasks(record).length;
+  const attachments = record.tasks.flatMap((task) => normalizeTaskEvidence(task.evidence));
+  return [
+    "Human contribution statement — editable draft",
+    "",
+    `Asset: ${record.name}`,
+    `Record: ${record.id}`,
+    `Analyzed: ${formatDate(record.createdAt)}`,
+    "",
+    "Work performed",
+    "Describe the substantive human decisions, revisions, source material and review work completed for this asset. Do not claim work that cannot be supported.",
+    "",
+    "Record facts",
+    `- Original detector signal: ${record.detection.aiPct == null ? "not available" : `${record.detection.aiPct}% AI-class score`}`,
+    `- Checklist: ${record.tasks.length - open}/${record.tasks.length} tasks self-attested complete`,
+    `- Supporting files in this browser: ${attachments.length}`,
+    "",
+    "Evidence still to add",
+    "List source files, before/after exports, reviewed diffs, licences, approvals or version history that support the statement above.",
+    "",
+    "Reviewer note",
+    "This is an editable working draft, not proof of authorship or legal advice.",
+  ].join("\n");
+}
+
+function evidenceDraftText(value) {
+  if (typeof value === "string") return boundedCopilotText(value, 12000);
+  if (!value || typeof value !== "object") return "";
+  const sections = [];
+  const statement = boundedCopilotText(value.statement || value.draft || value.text, 7000);
+  if (statement) sections.push(statement);
+  const facts = boundedCopilotList(value.factsUsed || value.facts_used, 12, 500);
+  const missing = boundedCopilotList(value.missingEvidence || value.missing_evidence, 12, 500);
+  const warnings = boundedCopilotList(value.warnings, 8, 500);
+  if (facts.length) sections.push(`Facts used\n${facts.map((item) => `- ${item}`).join("\n")}`);
+  if (missing.length) sections.push(`Evidence still needed\n${missing.map((item) => `- ${item}`).join("\n")}`);
+  if (warnings.length) sections.push(`Review warnings\n${warnings.map((item) => `- ${item}`).join("\n")}`);
+  return boundedCopilotText(sections.join("\n\n"), 12000);
+}
+
+function normalizeCopilotEnvelope(response, record) {
+  const outer = response?.data && typeof response.data === "object" ? response.data : response;
+  const source = outer?.copilot && typeof outer.copilot === "object" ? outer.copilot : outer || {};
+  const nestedPlan = source.plan && typeof source.plan === "object" && !Array.isArray(source.plan) ? source.plan : {};
+  const draft = source.evidenceDraft ?? source.evidence_draft ?? nestedPlan.evidenceDraft;
+  const normalized = normalizeStoredCopilot({
+    model: source.model,
+    responseId: source.responseId || source.response_id,
+    generatedAt: source.generatedAt || source.generated_at || new Date().toISOString(),
+    summary: source.summary || nestedPlan.summary,
+    detailedPlan: source.detailedPlan || source.detailed_plan || nestedPlan.tasks || source.tasks || (Array.isArray(source.plan) ? source.plan : []),
+    evidenceDraftTitle: typeof draft === "object" ? draft.title : "",
+    evidenceDraftText: evidenceDraftText(draft),
+    factsUsed: typeof draft === "object" ? draft.factsUsed || draft.facts_used : [],
+    missingEvidence: typeof draft === "object" ? draft.missingEvidence || draft.missing_evidence : [],
+    warnings: typeof draft === "object" ? draft.warnings : [],
+    rechecks: record.copilot?.rechecks || {},
+  }, record.tasks);
+  if (!normalized?.detailedPlan.length && !normalized?.evidenceDraftText && !normalized?.summary) {
+    throw new ApiError("The Evidence Copilot returned no usable plan.", 502);
+  }
+  return normalized;
+}
+
+async function generateCopilotPlan(record, { force = false, replaceDraft = false } = {}) {
+  if (!record || state.copilotPending.has(record.id)) return;
+  if (!force && record.copilot?.generatedAt) return;
+  if (!isEvidenceCopilotConfigured()) {
+    state.copilotMessages.set(record.id, { tone: "info", text: "Evidence Copilot is not configured. The deterministic plan and editable local starter draft remain available." });
+    if (state.currentId === record.id) renderReport(record);
+    return;
+  }
+  state.copilotPending.add(record.id);
+  state.copilotMessages.set(record.id, { tone: "info", text: "OpenAI is preparing a detailed plan and editable evidence draft…" });
+  if (state.currentId === record.id) renderReport(record);
+  try {
+    const response = await postDetect("copilot", JSON.stringify({ action: "generate_plan", record: copilotRecordPayload(record) }), { "Content-Type": "application/json" });
+    const generated = normalizeCopilotEnvelope(response, record);
+    const previous = normalizeStoredCopilot(record.copilot || {}, record.tasks) || {};
+    const preserveDraft = previous.draftEdited && !replaceDraft;
+    record.copilot = normalizeStoredCopilot({
+      ...previous,
+      ...generated,
+      evidenceDraftText: preserveDraft ? previous.evidenceDraftText : generated.evidenceDraftText || previous.evidenceDraftText,
+      suggestedDraftText: preserveDraft ? generated.evidenceDraftText : "",
+      draftEdited: preserveDraft,
+      draftUpdatedAt: preserveDraft ? previous.draftUpdatedAt : generated.evidenceDraftText ? new Date().toISOString() : previous.draftUpdatedAt,
+      rechecks: previous.rechecks || {},
+    }, record.tasks);
+    state.copilotMessages.set(record.id, { tone: "ok", text: "OpenAI prepared the detailed plan and evidence draft. Review and edit it before use." });
+    saveAssets();
+    renderCollections();
+  } catch (error) {
+    state.copilotMessages.set(record.id, {
+      tone: "warning",
+      text: `${error.message || "Evidence Copilot is unavailable."} The deterministic action plan and local starter draft remain available.`,
+    });
+  } finally {
+    state.copilotPending.delete(record.id);
+    if (state.currentId === record.id) renderReport(record);
+  }
+}
+
+async function recheckTaskWithCopilot(record, task) {
+  const pendingKey = `${record.id}:${task.id}`;
+  if (state.recheckPending.has(pendingKey)) return;
+  if (!isEvidenceCopilotConfigured()) {
+    state.copilotMessages.set(pendingKey, { tone: "info", text: "Evidence Copilot is not configured. The original detector and readiness score remain unchanged." });
+    if (state.currentId === record.id) renderReport(record);
+    return;
+  }
+  state.recheckPending.add(pendingKey);
+  state.copilotMessages.delete(pendingKey);
+  if (state.currentId === record.id) renderReport(record);
+  try {
+    const response = await postDetect("copilot", JSON.stringify({ action: "recheck_task", record: copilotRecordPayload(record), taskId: task.id }), { "Content-Type": "application/json" });
+    const outer = response?.data && typeof response.data === "object" ? response.data : response;
+    const source = outer?.recheck || outer?.result || outer;
+    const result = normalizeCopilotRecheck({ ...source, taskId: source?.taskId || task.id, checkedAt: source?.checkedAt || new Date().toISOString() }, new Set(record.tasks.map((item) => item.id)));
+    if (!result?.rationale) throw new ApiError("The Evidence Copilot returned no usable re-check result.", 502);
+    const copilot = normalizeStoredCopilot(record.copilot || {}, record.tasks) || normalizeStoredCopilot({}, record.tasks);
+    copilot.rechecks = { ...(copilot.rechecks || {}), [task.id]: result };
+    record.copilot = copilot;
+    saveAssets();
+    renderCollections();
+  } catch (error) {
+    state.copilotMessages.set(pendingKey, { tone: "warning", text: `${error.message || "Re-check unavailable."} The original detector and readiness score were not changed.` });
+  } finally {
+    state.recheckPending.delete(pendingKey);
+    if (state.currentId === record.id) renderReport(record);
+  }
+}
 
 /* ---------- Model-response normalization ---------- */
 function normalizeTextResult(data, sourceText = "") {
@@ -1843,6 +2132,7 @@ async function runAnalysis() {
       raw: compactRawRecord(result.raw),
       repository: result.repository || null,
       tasks: buildTasks(type, result.detection, details, { repository: result.repository || null, file: result.file || null }),
+      copilot: null,
       protectedAt: null,
     };
     if (result.preview) {
@@ -1854,6 +2144,7 @@ async function runAnalysis() {
     state.currentId = record.id;
     renderCollections();
     showRecord(record, { animate: true });
+    void generateCopilotPlan(record);
     els.results.scrollIntoView({ behavior: motionQuery.matches ? "auto" : "smooth", block: "start" });
     window.setTimeout(focusReportHeading, motionQuery.matches ? 0 : 320);
   } catch (error) {
@@ -2342,25 +2633,38 @@ function detectionCard(record) {
     </article>`;
 }
 
-function taskItem(task) {
+function copilotTaskDetail(record, task) {
+  return record.copilot?.detailedPlan?.find((item) => item.taskId === task.id) || null;
+}
+
+function taskRecheckResult(record, task) {
+  return record.copilot?.rechecks?.[task.id] || null;
+}
+
+function taskItem(record, task) {
   const quotes = task.quotes || [];
-  const expanded = state.expandedQuotes.has(`${state.currentId}:${task.id}`);
+  const expanded = state.expandedQuotes.has(`${record.id}:${task.id}`);
   const visible = expanded ? quotes : quotes.slice(0, QUOTES_VISIBLE);
   const hiddenCount = quotes.length - visible.length;
-  const attachments = normalizeTaskEvidence(task.evidence);
-  const evidenceMessage = state.evidenceMessages.get(`${state.currentId}:${task.id}`);
-  const evidencePending = state.evidencePending.has(`${state.currentId}:${task.id}`);
-  const evidenceItems = attachments.map((item) => `
-    <li class="task-evidence__item">
-      <div>
-        <strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
-        <span>${formatBytes(item.size)} · ${item.sha256 ? `SHA-256 ${escapeHtml(compactFingerprint(item.sha256))}` : "Hash unavailable"}</span>
-      </div>
-      <div class="task-evidence__actions">
-        <button class="text-action" type="button" aria-label="Download ${escapeHtml(item.name)} evidence for ${escapeHtml(task.title)}" data-evidence-download="${escapeHtml(item.id)}" data-evidence-task="${escapeHtml(task.id)}">Download</button>
-        <button class="text-action text-action--danger" type="button" aria-label="Remove ${escapeHtml(item.name)} evidence from ${escapeHtml(task.title)}" data-evidence-remove="${escapeHtml(item.id)}" data-evidence-task="${escapeHtml(task.id)}">Remove</button>
-      </div>
-    </li>`).join("");
+  const copilotDetail = copilotTaskDetail(record, task);
+  const recheck = taskRecheckResult(record, task);
+  const recheckKey = `${record.id}:${task.id}`;
+  const recheckPending = state.recheckPending.has(recheckKey);
+  const copilotConfigured = isEvidenceCopilotConfigured();
+  const recheckMessage = state.copilotMessages.get(recheckKey);
+  const detailSections = copilotDetail ? [
+    copilotDetail.why ? `<p>${escapeHtml(copilotDetail.why)}</p>` : "",
+    copilotDetail.steps.length ? `<div><strong>Recommended steps</strong><ol>${copilotDetail.steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol></div>` : "",
+    copilotDetail.acceptanceCriteria.length ? `<div><strong>Ready when</strong><ul>${copilotDetail.acceptanceCriteria.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : "",
+    copilotDetail.evidenceToCollect.length ? `<div><strong>Useful evidence</strong><ul>${copilotDetail.evidenceToCollect.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : "",
+  ].filter(Boolean).join("") : "";
+  const recheckCard = recheck ? `
+    <div class="task-recheck-result task-recheck-result--${escapeHtml(recheck.status)}" role="status">
+      <div><strong>${escapeHtml({ supported: "Supported by the current record", partial: "Partially supported", unsupported: "Not yet supported" }[recheck.status])}</strong>${recheck.confidence == null ? "" : `<span>${Math.round(recheck.confidence)}% review confidence</span>`}</div>
+      ${recheck.rationale ? `<p>${escapeHtml(recheck.rationale)}</p>` : ""}
+      ${recheck.nextSteps.length ? `<ul>${recheck.nextSteps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      <small>AI review from ${escapeHtml(formatDate(recheck.checkedAt))}; it does not change the detector score, readiness score or task checkbox.</small>
+    </div>` : recheckMessage ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(recheckMessage.tone || "info")}" role="status">${escapeHtml(recheckMessage.text)}</p>` : "";
   return `
     <li class="task${task.done ? " is-done" : ""}">
       <input type="checkbox" id="task-${task.id}" data-task="${task.id}" ${task.done ? "checked" : ""} />
@@ -2369,17 +2673,14 @@ function taskItem(task) {
           <label class="task__title" for="task-${task.id}">${escapeHtml(task.title)}</label>
           <div class="task__top-actions">
             <span class="prio prio--${task.priority}">${task.priority}</span>
-            <input type="file" id="task-evidence-${escapeHtml(task.id)}" data-evidence-input="${escapeHtml(task.id)}" multiple hidden />
-            <button class="task-evidence__add" type="button" aria-label="Attach optional evidence to ${escapeHtml(task.title)}" title="Attach optional supporting evidence" data-evidence-add="${escapeHtml(task.id)}" ${evidencePending ? "disabled aria-busy=\"true\"" : ""}>${icon("i-upload")}${evidencePending ? "Saving…" : "Evidence"}${attachments.length ? `<b aria-label="${plural(attachments.length, "attached file")}">${attachments.length}</b>` : ""}</button>
+            <button class="task-recheck" type="button" data-recheck-task="${escapeHtml(task.id)}" ${recheckPending || !copilotConfigured ? "disabled" : ""} ${recheckPending ? "aria-busy=\"true\"" : ""} ${copilotConfigured ? "" : "title=\"Evidence Copilot is not configured\""}>${recheckPending ? "Checking evidence…" : recheck ? "Re-check evidence again" : "Re-check evidence"}</button>
           </div>
         </div>
         <p class="task__detail">${escapeHtml(task.detail)}</p>
+        ${detailSections ? `<details class="task-copilot-detail" open><summary>OpenAI detailed plan</summary>${detailSections}</details>` : ""}
         ${visible.length ? `<ul class="task__quotes">${visible.map((q) => `<li>${escapeHtml(q)}</li>`).join("")}</ul>` : ""}
         ${hiddenCount > 0 ? `<button class="task__more" type="button" data-more="${task.id}">Show ${hiddenCount} more</button>` : ""}
-        ${evidenceItems || evidenceMessage ? `<div class="task-evidence">
-          ${evidenceItems ? `<ul class="task-evidence__list">${evidenceItems}</ul>` : ""}
-          ${evidenceMessage ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(evidenceMessage.tone || "info")}">${escapeHtml(evidenceMessage.text)}</p>` : ""}
-        </div>` : ""}
+        ${recheckCard}
       </div>
     </li>`;
 }
@@ -2399,6 +2700,7 @@ function planCard(record) {
     <section class="human-goal" aria-label="Human contribution target">
       <div><span>Human contribution plan</span><strong>${target.baselineHumanPct}% <i aria-hidden="true">→</i> ${projected}% <i aria-hidden="true">/</i> ${target.targetHumanPct}% target</strong></div>
       <p>${target.gapPct > 0 ? `Minimum planned work: ${escapeHtml(quantity)}. Checking the task records a self-attested plan; it does not change the original detector or demo estimate.` : "The planning baseline already reaches the 51% target. Keep the supporting versions, source files and review record."}</p>
+      <div class="human-goal__recheck"><button class="btn btn--outline btn--compact" type="button" data-action="rescan">Re-check revised asset</button><small>Upload, paste or import the revised version to create a new detector result. This is the only re-check that can produce a new AI/Human signal.</small></div>
     </section>` : "";
   const tasks = total
     ? `<div class="progress">
@@ -2406,7 +2708,7 @@ function planCard(record) {
          <span class="progress__bar" aria-hidden="true"><i style="width:${(done / total) * 100}%"></i></span>
        </div>
        <h3 class="group-title">Assigned to you</h3>
-       <ul class="tasks">${record.tasks.map(taskItem).join("")}</ul>`
+       <ul class="tasks">${record.tasks.map((task) => taskItem(record, task)).join("")}</ul>`
     : `<p class="callout callout--info">${icon("i-check")}<span>Nothing remains on the checklist. Complete the final review.</span></p>`;
 
   return `
@@ -2417,10 +2719,10 @@ function planCard(record) {
       ${humanGoal}
       <div class="plan-layout">
         <section class="plan-layout__tasks" aria-label="Your action checklist">${tasks}</section>
-        <aside class="plan-layout__aside" aria-label="Automated work and evidence guidance">
+        <aside class="plan-layout__aside" aria-label="Automated work and Copilot guidance">
           <div class="plan-evidence-note">
-            <span>${icon("i-upload")}</span>
-            <div><strong>Supporting evidence is optional</strong><p>Attach licences, source files, approvals or before/after exports to the relevant task. Checking a task still records your self-attested completion.</p></div>
+            <span>${icon("i-check")}</span>
+            <div><strong>Evidence re-check is not a detector rerun</strong><p>OpenAI reviews the current task facts and evidence metadata only. Use “Re-check revised asset” above to submit a changed asset and receive a genuinely new detector result.</p></div>
           </div>
           <details class="plan-automated" ${window.matchMedia("(min-width: 701px)").matches ? "open" : ""}>
             <summary>Handled by Aright</summary>
@@ -2429,6 +2731,69 @@ function planCard(record) {
         </aside>
       </div>
     </article>`;
+}
+
+function reviewEvidenceTask(record, task) {
+  const attachments = normalizeTaskEvidence(task.evidence);
+  const evidenceMessage = state.evidenceMessages.get(`${record.id}:${task.id}`);
+  const evidencePending = state.evidencePending.has(`${record.id}:${task.id}`);
+  const evidenceItems = attachments.map((item) => `
+    <li class="task-evidence__item">
+      <div>
+        <strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
+        <span>${formatBytes(item.size)} · ${item.sha256 ? `SHA-256 ${escapeHtml(compactFingerprint(item.sha256))}` : "Hash unavailable"}</span>
+      </div>
+      <div class="task-evidence__actions">
+        <button class="text-action" type="button" aria-label="Download ${escapeHtml(item.name)} evidence for ${escapeHtml(task.title)}" data-evidence-download="${escapeHtml(item.id)}" data-evidence-task="${escapeHtml(task.id)}">Download</button>
+        <button class="text-action text-action--danger" type="button" aria-label="Remove ${escapeHtml(item.name)} evidence from ${escapeHtml(task.title)}" data-evidence-remove="${escapeHtml(item.id)}" data-evidence-task="${escapeHtml(task.id)}">Remove</button>
+      </div>
+    </li>`).join("");
+  return `
+    <article class="review-evidence-task">
+      <div class="review-evidence-task__head">
+        <div><strong>${escapeHtml(task.title)}</strong><small>${task.done ? "Self-attested complete" : "Open task"} · ${plural(attachments.length, "file")}</small></div>
+        <input type="file" id="task-evidence-${escapeHtml(task.id)}" data-evidence-input="${escapeHtml(task.id)}" multiple hidden />
+        <button class="task-evidence__add" type="button" aria-label="Attach optional evidence to ${escapeHtml(task.title)}" data-evidence-add="${escapeHtml(task.id)}" ${evidencePending ? "disabled aria-busy=\"true\"" : ""}>${icon("i-upload")}${evidencePending ? "Saving…" : "Attach files"}${attachments.length ? `<b aria-label="${plural(attachments.length, "attached file")}">${attachments.length}</b>` : ""}</button>
+      </div>
+      ${evidenceItems ? `<ul class="task-evidence__list">${evidenceItems}</ul>` : `<p class="review-evidence-task__empty">No files attached. Supporting evidence is optional.</p>`}
+      ${evidenceMessage ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(evidenceMessage.tone || "info")}" role="status">${escapeHtml(evidenceMessage.text)}</p>` : ""}
+    </article>`;
+}
+
+function copilotDraftCard(record) {
+  const copilot = record.copilot;
+  const pending = state.copilotPending.has(record.id);
+  const configured = isEvidenceCopilotConfigured();
+  const message = state.copilotMessages.get(record.id);
+  const text = copilot?.evidenceDraftText || localEvidenceDraft(record);
+  const sourceLabel = copilot?.generatedAt ? `OpenAI draft · ${formatDate(copilot.generatedAt)}` : pending ? "OpenAI draft in progress" : "Local starter draft";
+  return `
+    <section class="copilot-draft" aria-labelledby="copilot-draft-title">
+      <div class="copilot-draft__head">
+        <div><p class="panel-kicker">Evidence Copilot</p><h3 id="copilot-draft-title">Editable Human-work statement</h3><p>${escapeHtml(sourceLabel)}. Review every claim before export.</p></div>
+        <button class="btn btn--outline copilot-draft__refresh" type="button" data-copilot-generate ${pending || !configured ? "disabled" : ""} ${pending ? "aria-busy=\"true\"" : ""}>${pending ? "Preparing…" : configured ? copilot?.generatedAt ? "Regenerate draft" : "Generate with OpenAI" : "Copilot not configured"}</button>
+      </div>
+      ${copilot?.summary ? `<p class="copilot-draft__summary">${escapeHtml(copilot.summary)}</p>` : ""}
+      <label class="sr-only" for="copilot-evidence-draft-${escapeHtml(record.id)}">Editable Human-work evidence draft</label>
+      <textarea id="copilot-evidence-draft-${escapeHtml(record.id)}" data-copilot-draft rows="13" spellcheck="true">${escapeHtml(text)}</textarea>
+      <div class="copilot-draft__footer">
+        <span data-copilot-save-status>${copilot?.draftUpdatedAt ? `Saved locally ${escapeHtml(formatDate(copilot.draftUpdatedAt))}` : "Changes save automatically in this browser."}</span>
+        <span>Attachment bytes are never sent to OpenAI; re-check sends metadata only.</span>
+      </div>
+      ${copilot?.suggestedDraftText ? `<details class="copilot-suggestion"><summary>New AI suggestion kept separately</summary><pre>${escapeHtml(copilot.suggestedDraftText)}</pre></details>` : ""}
+      ${message ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(message.tone || "info")}" role="status">${escapeHtml(message.text)}</p>` : ""}
+    </section>`;
+}
+
+function reviewEvidenceSection(record) {
+  return `
+    <section class="review-evidence-files" aria-labelledby="review-evidence-title">
+      <div class="review-evidence-files__head">
+        <div><p class="panel-kicker">Optional supporting files</p><h3 id="review-evidence-title">Evidence by task</h3></div>
+        <p>Add source files, before/after exports, approvals, licences or reviewed diffs. Files stay in this browser; JSON includes metadata and hashes, while the local ZIP can include the available bytes.</p>
+      </div>
+      <div class="review-evidence-files__list">${record.tasks.map((task) => reviewEvidenceTask(record, task)).join("")}</div>
+    </section>`;
 }
 
 function protectionCard(record, status) {
@@ -2481,12 +2846,16 @@ function protectionCard(record, status) {
             <span><strong>${attachments.length}</strong> ${attachments.length === 1 ? "file" : "files"}</span>
             <span><strong>${evidencedTasks}</strong> tasks with files</span>
           </div>
-          <p>Attachments are optional and stay in this browser. The JSON evidence download includes their metadata and SHA-256 hashes, not the file bytes.</p>
+          <p>Attachments are optional and stay in this browser. JSON includes metadata and SHA-256 hashes only; the ZIP package can include locally available file bytes.</p>
           <div class="actions">
             ${primary}
             <button class="btn btn--outline" type="button" data-action="download">${icon("i-download")}Download evidence JSON</button>
           </div>
         </aside>
+      </div>
+      <div class="review-support-grid">
+        ${copilotDraftCard(record)}
+        ${reviewEvidenceSection(record)}
       </div>
       <p class="disclaimer">Model scores are screening signals, not proof of authorship, infringement, or legal protection. Checklist completion is self-attested; the downloaded JSON is not a signed or tamper-evident legal record. IPR readiness is documentation guidance, not legal advice.</p>
     </article>`;
@@ -2814,6 +3183,18 @@ function evidenceOf(record) {
       target: target || null,
       supportingEvidence: normalizeTaskEvidence(evidence),
     })),
+    evidenceCopilot: record.copilot ? {
+      model: record.copilot.model || null,
+      responseId: record.copilot.responseId || null,
+      generatedAt: record.copilot.generatedAt || null,
+      summary: record.copilot.summary || null,
+      detailedPlan: record.copilot.detailedPlan || [],
+      editableHumanWorkStatement: record.copilot.evidenceDraftText || null,
+      userEdited: Boolean(record.copilot.draftEdited),
+      draftUpdatedAt: record.copilot.draftUpdatedAt || null,
+      rechecks: record.copilot.rechecks || {},
+      warning: "AI-generated drafting and re-checks are review aids, not proof. The original detector score and checklist declarations remain separate.",
+    } : null,
     attachmentPolicy: "Supporting file bytes remain in this browser's IndexedDB. This JSON exports filenames, sizes, timestamps and SHA-256 hashes only.",
     rawModelRecord: record.raw,
   };
@@ -2921,7 +3302,7 @@ async function attachTaskEvidence(record, task, files) {
   } else {
     setTaskEvidenceMessage(record.id, task.id, skipped.join("; ") || "No evidence file was attached.", "error");
   }
-  state.reportTabs.set(record.id, "plan");
+  state.reportTabs.set(record.id, "review");
   if (state.currentId === record.id) {
     renderReport(record);
     window.requestAnimationFrame(() => $(`[data-evidence-add="${task.id}"]`, els.report)?.focus({ preventScroll: true }));
@@ -2952,6 +3333,7 @@ async function removeTaskEvidence(record, task, evidenceId) {
     saveAssets();
     renderCollections();
     if (state.currentId === record.id) {
+      state.reportTabs.set(record.id, "review");
       renderReport(record);
       window.requestAnimationFrame(() => $(`[data-evidence-add="${task.id}"]`, els.report)?.focus({ preventScroll: true }));
     }
@@ -3340,6 +3722,24 @@ els.report.addEventListener("change", async (event) => {
   $(`#task-${task.id}`)?.focus({ preventScroll: true });
 });
 
+els.report.addEventListener("input", (event) => {
+  const draft = event.target.closest("[data-copilot-draft]");
+  const record = currentRecord();
+  if (!draft || !record) return;
+  const copilot = normalizeStoredCopilot(record.copilot || {}, record.tasks) || normalizeStoredCopilot({}, record.tasks);
+  copilot.evidenceDraftText = draft.value.slice(0, 12000);
+  copilot.draftEdited = true;
+  copilot.draftUpdatedAt = new Date().toISOString();
+  record.copilot = copilot;
+  const status = $("[data-copilot-save-status]", els.report);
+  if (status) status.textContent = "Saving locally…";
+  window.clearTimeout(copilotDraftSaveTimer);
+  copilotDraftSaveTimer = window.setTimeout(() => {
+    saveAssets();
+    if (status?.isConnected) status.textContent = "Saved locally in this browser.";
+  }, 250);
+});
+
 els.report.addEventListener("click", (event) => {
   const reportAnchor = event.target.closest("[data-report-anchor]");
   if (reportAnchor) {
@@ -3348,6 +3748,20 @@ els.report.addEventListener("click", (event) => {
   }
   const record = currentRecord();
   if (!record) return;
+
+  const recheck = event.target.closest("[data-recheck-task]");
+  if (recheck) {
+    const task = record.tasks.find((item) => item.id === recheck.dataset.recheckTask);
+    if (task) void recheckTaskWithCopilot(record, task);
+    return;
+  }
+
+  const generateCopilot = event.target.closest("[data-copilot-generate]");
+  if (generateCopilot) {
+    const replaceDraft = !record.copilot?.draftEdited || window.confirm("Replace your edited statement with a new OpenAI draft? Your current text will otherwise be preserved as the active draft.");
+    void generateCopilotPlan(record, { force: true, replaceDraft });
+    return;
+  }
 
   const evidenceAdd = event.target.closest("[data-evidence-add]");
   if (evidenceAdd) {

@@ -25,22 +25,38 @@ const AIORNOT_API_KEY_BACKUP = AIORNOT_API_KEY && AIORNOT_API_KEY_BACKUP_CANDIDA
   ? AIORNOT_API_KEY_BACKUP_CANDIDATE
   : "";
 const GITHUB_API_TOKEN = String(process.env.GITHUB_API_TOKEN || "").trim();
+const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "").trim();
+const OPENAI_MODEL = String(process.env.OPENAI_MODEL || "gpt-5.6-luna").trim() || "gpt-5.6-luna";
+const OPENAI_TIMEOUT_MS = Math.max(5_000, Math.min(90_000, Number(process.env.OPENAI_TIMEOUT_MS) || 45_000));
+const OPENAI_MAX_REQUESTS_PER_MINUTE = Math.max(1, Number(process.env.OPENAI_MAX_REQUESTS_PER_MINUTE) || 8);
+const OPENAI_MAX_CONCURRENT = Math.max(1, Number(process.env.OPENAI_MAX_CONCURRENT) || 1);
 const AIORNOT_TIMEOUT_MS = Number(process.env.AIORNOT_TIMEOUT_MS) || 120_000;
 const AIORNOT_MAX_REQUESTS_PER_MINUTE = Math.max(1, Number(process.env.AIORNOT_MAX_REQUESTS_PER_MINUTE) || 12);
 const AIORNOT_MAX_CONCURRENT = Math.max(1, Number(process.env.AIORNOT_MAX_CONCURRENT) || 2);
 const AIORNOT_IMAGE_ENDPOINT = "https://api.aiornot.com/v2/image/sync";
 const AIORNOT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const COPILOT_BODY_MAX_BYTES = 64 * 1024;
 const AIORNOT_IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const aiOrNotUsage = { active: 0, timestamps: [] };
-const ALLOW_FILE_ORIGIN_CORS = !AIORNOT_API_KEY && /^true$/i.test(String(process.env.ALLOW_FILE_ORIGIN_CORS || ""));
+const PAID_PROVIDER_CREDENTIALS_PRESENT = Boolean(AIORNOT_API_KEY || OPENAI_API_KEY);
+const PAID_MODE_LOCKED = PAID_PROVIDER_CREDENTIALS_PRESENT && !ADMIN_PASSWORD;
+const AIORNOT_ENABLED = Boolean(AIORNOT_API_KEY && ADMIN_PASSWORD);
+const OPENAI_ENABLED = Boolean(OPENAI_API_KEY && ADMIN_PASSWORD);
+const ALLOW_FILE_ORIGIN_CORS = !(AIORNOT_API_KEY || OPENAI_API_KEY) && /^true$/i.test(String(process.env.ALLOW_FILE_ORIGIN_CORS || ""));
 const WORKER_PATH = path.join(ROOT, "ml_worker.py");
 const VENV_PYTHON = path.join(ROOT, ".aright-venv", "Scripts", "python.exe");
 const PYTHON = String(process.env.PYTHON || (fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python"));
 let githubCodeModulePromise;
+let openAiCopilotModulePromise;
 
 function githubCodeModule() {
   if (!githubCodeModulePromise) githubCodeModulePromise = import("./lib/github-code.mjs");
   return githubCodeModulePromise;
+}
+
+function openAiCopilotModule() {
+  if (!openAiCopilotModulePromise) openAiCopilotModulePromise = import("./lib/openai-copilot.mjs");
+  return openAiCopilotModulePromise;
 }
 
 const PRIVATE_SEGMENTS = new Set(["tmp", "node_modules", ".venv", ".aright-venv", "tests", "__pycache__"]);
@@ -89,10 +105,15 @@ function loadEnv(file) {
   }
 }
 
-function corsHeaders(req) {
+function requestOriginAllowed(req) {
   const origin = String(req.headers.origin || "");
   const exactOrigins = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
-  const allowed = !origin || exactOrigins.has(origin) || (origin === "null" && ALLOW_FILE_ORIGIN_CORS);
+  return !origin || exactOrigins.has(origin) || (origin === "null" && ALLOW_FILE_ORIGIN_CORS);
+}
+
+function corsHeaders(req) {
+  const origin = String(req.headers.origin || "");
+  const allowed = requestOriginAllowed(req);
   const headers = {
     "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Admin-Key, X-File-Name, X-Sample-Rate",
@@ -112,24 +133,25 @@ function sendJson(req, res, status, body) {
 }
 
 function isAuthorized(req) {
+  if (PAID_MODE_LOCKED) return false;
   if (!ADMIN_PASSWORD) return true;
   const given = Buffer.from(String(req.headers["x-admin-key"] || ""));
   const expected = Buffer.from(ADMIN_PASSWORD);
   return given.length === expected.length && crypto.timingSafeEqual(given, expected);
 }
 
-function readBody(req) {
+function readBody(req, limit = MAX_BODY_BYTES, tooLargeMessage = "Upload is larger than 25 MB.") {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     let tooLarge = false;
     req.on("data", (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) tooLarge = true;
+      if (size > limit) tooLarge = true;
       if (!tooLarge) chunks.push(chunk);
     });
     req.on("end", () => {
-      if (tooLarge) reject(Object.assign(new Error("Upload is larger than 25 MB."), { status: 413 }));
+      if (tooLarge) reject(Object.assign(new Error(tooLargeMessage), { status: 413 }));
       else resolve(Buffer.concat(chunks));
     });
     req.on("error", reject);
@@ -444,6 +466,7 @@ class PersistentMlWorker {
     delete workerEnv.AIORNOT_API_KEY;
     delete workerEnv.AIORNOT_API_KEY_BACKUP;
     delete workerEnv.GITHUB_API_TOKEN;
+    delete workerEnv.OPENAI_API_KEY;
     const child = spawn(PYTHON, ["-u", WORKER_PATH], {
       cwd: ROOT,
       windowsHide: true,
@@ -538,6 +561,10 @@ async function handleApi(req, res, pathname) {
     return res.end();
   }
 
+  if (!requestOriginAllowed(req)) {
+    return sendJson(req, res, 403, { error: "Cross-origin API requests are not allowed.", type: "ORIGIN_FORBIDDEN" });
+  }
+
   if (pathname === "/api/status") {
     let worker = null;
     let workerError = "";
@@ -548,15 +575,16 @@ async function handleApi(req, res, pathname) {
     }
     return sendJson(req, res, 200, {
       online: true,
-      provider: AIORNOT_API_KEY ? "aiornot-plus-self-hosted-open-models" : "self-hosted-open-models",
+      provider: AIORNOT_ENABLED ? "aiornot-plus-self-hosted-open-models" : "self-hosted-open-models",
       providers: {
         image: {
-          primary: AIORNOT_API_KEY ? "AI or Not v2" : "Community Forensics",
-          configured: Boolean(AIORNOT_API_KEY),
-          failoverConfigured: Boolean(AIORNOT_API_KEY_BACKUP),
+          primary: AIORNOT_ENABLED ? "AI or Not v2" : "Community Forensics",
+          configured: AIORNOT_ENABLED,
+          failoverConfigured: Boolean(AIORNOT_ENABLED && AIORNOT_API_KEY_BACKUP),
           localComparison: true,
-          remoteProcessing: Boolean(AIORNOT_API_KEY),
-          costGuard: AIORNOT_API_KEY ? {
+          remoteProcessing: AIORNOT_ENABLED,
+          disabledReason: AIORNOT_API_KEY && !ADMIN_PASSWORD ? "Set ADMIN_PASSWORD before enabling paid provider requests." : "",
+          costGuard: AIORNOT_ENABLED ? {
             maxRequestsPerMinute: AIORNOT_MAX_REQUESTS_PER_MINUTE,
             maxConcurrent: AIORNOT_MAX_CONCURRENT,
             ...aiOrNotRateState(),
@@ -569,33 +597,102 @@ async function handleApi(req, res, pathname) {
           publicOnly: true,
           remoteProcessing: true,
         },
+        openai: {
+          primary: "OpenAI Responses API",
+          configured: OPENAI_ENABLED,
+          model: OPENAI_MODEL.slice(0, 120),
+          remoteProcessing: OPENAI_ENABLED,
+          storeResponses: false,
+          scope: "Editable evidence plans and task re-checks; not detector scoring",
+          disabledReason: OPENAI_API_KEY && !ADMIN_PASSWORD ? "Set ADMIN_PASSWORD before enabling Evidence Copilot requests." : "",
+          costGuard: {
+            maxRequestsPerMinute: OPENAI_MAX_REQUESTS_PER_MINUTE,
+            maxConcurrent: OPENAI_MAX_CONCURRENT,
+          },
+        },
       },
-      capabilities: { githubPublicRepositories: true },
+      capabilities: { githubPublicRepositories: true, evidenceCopilot: OPENAI_ENABLED },
       worker,
       workerError,
-      authRequired: Boolean(ADMIN_PASSWORD),
+      configurationError: PAID_MODE_LOCKED ? "ADMIN_PASSWORD is required whenever a paid provider key is configured." : "",
+      authRequired: Boolean(ADMIN_PASSWORD || PAID_PROVIDER_CREDENTIALS_PRESENT),
       authorized: isAuthorized(req),
     });
   }
 
   const kind = pathname.startsWith("/api/detect/") ? pathname.slice("/api/detect/".length) : "";
-  if (!["text", "file", "image", "audio", "github"].includes(kind)) {
+  if (!["text", "file", "image", "audio", "github", "copilot"].includes(kind)) {
     return sendJson(req, res, 404, { error: "Unknown endpoint." });
   }
   if (req.method !== "POST") return sendJson(req, res, 405, { error: "Use POST." });
+  if (PAID_MODE_LOCKED) {
+    return sendJson(req, res, 503, { error: "Set ADMIN_PASSWORD before using Aright with paid provider keys.", type: "ADMIN_PASSWORD_REQUIRED" });
+  }
   if (!isAuthorized(req)) return sendJson(req, res, 401, { error: "The console access key is missing or wrong." });
 
+  if (kind === "copilot") {
+    const contentType = String(req.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+    if (contentType !== "application/json") {
+      return sendJson(req, res, 415, { error: "Send the Evidence Copilot request as JSON.", type: "UNSUPPORTED_MEDIA_TYPE" });
+    }
+  }
+
   const declared = Number(req.headers["content-length"] || 0);
-  const bodyLimit = kind === "github" ? 2_048 : MAX_BODY_BYTES;
-  if (declared > bodyLimit) return sendJson(req, res, 413, { error: kind === "github" ? "The GitHub import request is too large." : "Upload is larger than 25 MB." });
+  const bodyLimit = kind === "github" ? 2_048 : kind === "copilot" ? COPILOT_BODY_MAX_BYTES : MAX_BODY_BYTES;
+  const bodyLimitMessage = kind === "github"
+    ? "The GitHub import request is too large."
+    : kind === "copilot"
+      ? "The Evidence Copilot request is too large."
+      : "Upload is larger than 25 MB.";
+  if (declared > bodyLimit) return sendJson(req, res, 413, { error: bodyLimitMessage, type: "REQUEST_TOO_LARGE" });
 
   let body;
   try {
-    body = await readBody(req);
+    body = await readBody(req, bodyLimit, bodyLimitMessage);
   } catch (error) {
     return sendJson(req, res, error.status || 400, { error: error.message });
   }
-  if (body.length > bodyLimit) return sendJson(req, res, 413, { error: kind === "github" ? "The GitHub import request is too large." : "Upload is larger than 25 MB." });
+  if (body.length > bodyLimit) return sendJson(req, res, 413, { error: bodyLimitMessage, type: "REQUEST_TOO_LARGE" });
+
+  if (kind === "copilot") {
+    if (!OPENAI_ENABLED) {
+      return sendJson(req, res, 503, { error: "The Evidence Copilot is not configured.", type: "OPENAI_NOT_CONFIGURED" });
+    }
+    let input;
+    try {
+      input = JSON.parse(body.toString("utf8"));
+    } catch {
+      return sendJson(req, res, 400, { error: "The Evidence Copilot request must be valid JSON.", type: "INVALID_JSON" });
+    }
+    try {
+      const { runOpenAiCopilot } = await openAiCopilotModule();
+      const result = await runOpenAiCopilot(input, {
+        apiKey: OPENAI_API_KEY,
+        model: OPENAI_MODEL,
+        timeoutMs: OPENAI_TIMEOUT_MS,
+        maxRequestsPerMinute: OPENAI_MAX_REQUESTS_PER_MINUTE,
+        maxConcurrent: OPENAI_MAX_CONCURRENT,
+        fetchImpl: fetch,
+      });
+      return sendJson(req, res, 200, {
+        data: result,
+        raw: {
+          provider: "OpenAI Responses API",
+          action: result.action,
+          model: result.model,
+          responseId: result.responseId,
+          generatedAt: result.generatedAt,
+          stored: false,
+        },
+      });
+    } catch (error) {
+      const status = Number(error?.status);
+      return sendJson(req, res, Number.isFinite(status) ? status : 502, {
+        error: error?.name === "CopilotError" ? error.message : "The Evidence Copilot could not complete this request.",
+        type: error?.code || "OPENAI_COPILOT_ERROR",
+      });
+    }
+  }
 
   if (kind === "github") {
     let repositoryUrl = "";
@@ -638,7 +735,7 @@ async function handleApi(req, res, pathname) {
   }
 
   try {
-    if (kind === "image" && AIORNOT_API_KEY) {
+    if (kind === "image" && AIORNOT_ENABLED) {
       const mime = String(req.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
       const fileName = safeFileName(req.headers["x-file-name"]);
       // Decode, dimension-check and score locally before spending a metered provider call.
@@ -751,7 +848,8 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`Aright running at http://127.0.0.1:${PORT}`);
   console.log(`Console:          http://127.0.0.1:${PORT}/admin/`);
   console.log(`ML worker:        ${PYTHON}`);
-  if (ADMIN_PASSWORD) console.log("Console access key is required (ADMIN_PASSWORD). ");
+  if (PAID_MODE_LOCKED) console.error("Paid provider calls are disabled: set ADMIN_PASSWORD in .env and restart Aright.");
+  else if (ADMIN_PASSWORD) console.log("Console access key is required (ADMIN_PASSWORD). ");
   ml.request("status", {}, 15_000).then(() => console.log("ML worker ready; models load on first use.")).catch((error) => {
     console.error(`ML worker unavailable: ${error.message}`);
   });

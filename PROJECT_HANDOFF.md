@@ -21,13 +21,16 @@ Airight currently includes:
 - a separate analysis console following the deck flow: **analysis & IPR score → action plan → review/evidence**;
 - hosted AI or Not screening for text, images and browser-sampled video frames;
 - local pinned models for text/documents, images and synthetic/cloned speech;
-- deterministic IPR-readiness scoring, prioritized tasks, browser-local register and downloadable JSON evidence;
+- deterministic IPR-readiness scoring, prioritized tasks, browser-local register and downloadable JSON/PDF/ZIP evidence;
 - password-gated hosted detector requests and server-side provider credentials;
 - optional server-side AI or Not credential failover for provider HTTP 401/402/403 only, with no automatic retry for 429, timeout, network, 5xx, or invalid input;
 - a full-width analysis composer with a populated desktop Evidence rail, spacious media/text inputs and a responsive mobile action flow;
 - a continuous one-page report with sticky **Repository / Human plan / Evidence** section navigation, no nested report scroller, compact score summary and de-duplicated actions;
 - modality-specific report layouts that use the full canvas for text, image, video and audio findings instead of leaving a narrow preview beside empty space;
-- optional per-task supporting-file attachments. Task completion remains self-attested and independent; attachment bytes stay in browser IndexedDB while JSON exports contain metadata and SHA-256 fingerprints only;
+- optional per-task supporting-file attachments in **Review & protection**. Task completion remains self-attested and independent; attachment bytes stay in browser IndexedDB while JSON exports contain metadata and SHA-256 fingerprints only;
+- an optional OpenAI Evidence Copilot that creates detailed task steps and an editable Human-work statement, then re-checks available evidence metadata without changing detector/IPR scores or checklist state. Attachment bytes are never sent to OpenAI and Responses API calls use `store:false`;
+- **Re-check revised asset** starts a genuine new detector run after the user supplies the edited version; task-level **Re-check evidence** is explicitly an AI review aid, not detector rescoring;
+- browser-native Print / Save PDF and a local ZIP package containing a manifest, printable HTML, attachment hashes, verification metadata and available IndexedDB file bytes. Its package fingerprint is not a digital signature or trusted timestamp;
 - public GitHub repository import for Code: real tree/source-sample coverage, repository profile, created/pushed/latest-commit timeline, languages, public activity and top contributors, plus a stable repository-ID-seeded ChatGPT/Codex/other/Human demo mix. It is explicitly illustrative, not forensic model attribution;
 - a separate 51% Human contribution plan with concrete code lines/files/tests, text words, image edit categories, video shots or audio seconds. Completing the task never rewrites the original model signal.
 
@@ -80,14 +83,15 @@ Use the existing **`airight`** project. Production secrets already belong in Ver
 
 ## Secrets and data
 
-- `AIORNOT_API_KEY`, optional `AIORNOT_API_KEY_BACKUP`, and `ADMIN_PASSWORD` must exist only in local `.env` and Vercel encrypted environment variables.
+- `AIORNOT_API_KEY`, optional `AIORNOT_API_KEY_BACKUP`, `OPENAI_API_KEY`, and `ADMIN_PASSWORD` must exist only in local `.env` and Vercel encrypted environment variables.
+- `OPENAI_MODEL` defaults to `gpt-5.6-luna`; the Copilot has separate best-effort 8 RPM / 1 concurrent-call guards. It is an evidence-writing/review assistant, never a content-authorship detector.
 - `GITHUB_API_TOKEN` is optional and server-only. Public imports work without it at GitHub's lower unauthenticated rate; never paste a token into the browser or commit it.
 - The backup is attempted once only after provider 401/402/403. It is not used for timeouts, network errors, rate limits, invalid input, or provider 5xx responses because the first attempt may already be billable.
 - No credential value is recorded in this handoff or tracked source.
-- Provider credentials and the current admin password were previously shared in chat. Treat every pasted credential as compromised: rotate it out-of-band, update local `.env` and the encrypted Vercel Production values, then redeploy. Never put replacement values in Git, this handoff, or chat.
+- Provider credentials, including the temporary OpenAI key, and the current admin password were previously shared in chat. Treat every pasted credential as compromised: rotate it out-of-band after testing, update local `.env` and the encrypted Vercel Production values, then redeploy. Never put replacement values in Git, this handoff, or chat.
 - If the console password is unavailable on the home laptop, reset `ADMIN_PASSWORD` in Vercel rather than storing it in this file.
 - Configure a Vercel WAF rate-limit rule for `/api/detect/*` and keep provider spend alerts/limits enabled. The in-code serverless limiter is only best-effort per instance and counts outbound attempts; credential failover can consume two attempts for one detector call.
-- Reports currently live in each browser's `localStorage`. The home laptop will start with an empty register; office-browser records do **not** sync automatically. Download important JSON evidence from the original browser before leaving it.
+- Reports currently live in each browser's `localStorage`, with attachment bytes in IndexedDB. The home laptop will start with an empty register; office-browser records do **not** sync automatically. Download the ZIP package from the original browser before leaving it if the locally attached files are needed.
 - Browser records are editable and unsigned; this is not yet a secure, tamper-evident evidence vault.
 - Before broader publication, confirm distribution rights/consent for `Airight.pdf`, founder portraits and other tracked photography, and strip unnecessary EXIF/location metadata.
 
@@ -101,16 +105,19 @@ Use the existing **`airight`** project. Production secrets already belong in Ver
 | Audio | Disabled unless provider voice entitlement is explicitly enabled | Pinned Spectra-AASIST3 speech screening |
 | PDF/DOCX | Paste extracted text or upload TXT | Server-side PDF/DOCX/TXT extraction |
 | Code | Public GitHub tree + bounded source sample; deterministic demo mix | Same safe GitHub importer |
+| Evidence Copilot | OpenAI Responses API when configured | Same server-side OpenAI adapter when configured and access is password-gated |
 
 Video is frame-level screening, not full temporal deepfake detection. Audio screening is speech-only, not AI-music detection.
 
 ## Last verified QA
 
-- Tracked API/import tests: **33/33 passed**, including primary/backup routing, fresh multipart bodies, no-retry failures, rate guards, secret redaction, GitHub URL/SSRF validation, shared import deadlines, secondary-limit handling, deterministic mixes and exact 51% line math.
+- Tracked Node suite: **44/44 passed**, including provider failover, rate/security guards, GitHub import, OpenAI Evidence Copilot structured-output/error handling, local paid-mode access controls, and PDF/ZIP package integrity.
 - Admin responsive/browser regression: **11/11 passed**.
 - Dedicated Code-import browser flow: **5/5 passed** at **1440×900, 1024×768, 390×844 and 320×700**, including reload, export, rescan, keyboard navigation, stable rerenders and no overflow.
 - Cross-modality report matrix: **20/20 passed** for Text, Image, Video, Audio and Code at **1440, 1024, 390 and 320 px** with no report/document overflow or browser errors.
 - Optional evidence lifecycle passed at 390 px: attach without task mutation, IndexedDB byte persistence, metadata-only localStorage/JSON, reload, byte-identical download and removal.
+- Evidence Copilot browser flow passed at **1440, 1024, 390 and 320 px** with mocked providers: the base detector report remained usable while generation was pending; detailed plans and editable drafts persisted across reload; evidence re-check left detector/IPR/task state unchanged; revised-asset re-check returned to the real analysis intake; Plan contained no upload controls and Review owned all attachments.
+- Print/PDF and ZIP export checks passed, including long-draft print expansion, ZIP structure/CRC/SHA verification, attachment-byte inclusion only in attachment entries, rerender resilience and explicit non-signature/trusted-timestamp warnings.
 - Real local end-to-end import of `Surmavanick/Airight` passed through GitHub's live REST API: 17 eligible files, 8 bounded samples, repository activity/contributor enrichment, stable 100% composition and no source-code persistence in the response.
 - Report workflow passed at **1440×900, 1280×800, 1024×768, 390×844 and 320×700**.
 - Tested: sticky section navigation and manual-scroll state, task rerenders/focus, Review completion/reopen, evidence download, second analysis, desktop Evidence fields, large media previews, mobile touch targets, no nested report scroll, no horizontal overflow, and no browser/page errors.
@@ -122,9 +129,11 @@ Useful tracked check:
 ```powershell
 node --check server.js
 node --check js\admin.js
+node --check js\report-export.js
 node --check lib\cloud-api.mjs
 node --check lib\github-code.mjs
-node --test tests\cloud-api.test.mjs tests\github-code.test.mjs
+node --check lib\openai-copilot.mjs
+node --test tests
 git diff --check
 ```
 
@@ -132,8 +141,8 @@ git diff --check
 
 - `README.md` — complete setup, architecture and limitations
 - `index.html`, `css/styles.css`, `js/main.js` — marketing site
-- `admin/index.html`, `css/admin.css`, `js/admin.js` — console UI/workflow
-- `api/`, `lib/cloud-api.mjs`, `lib/github-code.mjs`, `vercel.json` — hosted serverless API and safe GitHub importer
+- `admin/index.html`, `css/admin.css`, `js/admin.js`, `js/report-export.js` — console UI/workflow, PDF printing and local ZIP packaging
+- `api/`, `lib/cloud-api.mjs`, `lib/github-code.mjs`, `lib/openai-copilot.mjs`, `vercel.json` — hosted serverless API, safe GitHub importer and bounded OpenAI adapter
 - `server.js`, `ml_worker.py` — local API and model worker
 - `Airight.pdf` — product source deck
 - `THIRD_PARTY_NOTICES.md`, `licenses/` — exact model provenance/licensing
