@@ -6,12 +6,12 @@
   <title>Aright Console | AI Analysis &amp; IPR Scoring</title>
   <meta name="description" content="Screen text, images, video, audio and public GitHub code repositories, score their IP readiness, and get a concrete action plan." />
   <meta name="robots" content="noindex" />
-  <meta name="aright-build" content="20260921-6" />
+  <meta name="aright-build" content="20260921-7" />
   <meta name="theme-color" content="#171915" />
   <link rel="icon" href="../assets/img/brand-mark.svg" type="image/svg+xml" />
   <link rel="icon" href="../assets/img/favicon-32.png" sizes="32x32" />
-  <link rel="stylesheet" href="../css/styles.css?v=20260921-6" />
-  <link rel="stylesheet" href="../css/admin.css?v=20260921-6" />
+  <link rel="stylesheet" href="../css/styles.css?v=20260921-7" />
+  <link rel="stylesheet" href="../css/admin.css?v=20260921-7" />
 </head>
 <body class="console is-checking-access">
 
@@ -358,7 +358,14 @@
 
             <div class="box loading" id="loadingState" hidden>
               <span class="spinner" aria-hidden="true"></span>
-              <p id="loadingText" role="status">Loading the detection model…</p>
+              <div class="loading__body">
+                <p id="loadingText" role="status" aria-live="polite">Loading the detection model…</p>
+                <ol class="import-stages" id="importStages" aria-label="Repository import progress" hidden>
+                  <li data-import-stage="1"><span>Stage 1</span><strong>Connect repository</strong></li>
+                  <li data-import-stage="2"><span>Stage 2</span><strong>Sample source code</strong></li>
+                  <li data-import-stage="3"><span>Stage 3</span><strong>Build repository report</strong></li>
+                </ol>
+              </div>
             </div>
 
             <div class="box problem" id="errorState" hidden role="alert">
@@ -469,7 +476,7 @@
     </form>
   </dialog>
 
-  <script src="../js/admin.js?v=20260921-6" defer></script>
-  <script src="../js/report-export.js?v=20260921-6" defer></script>
+  <script src="../js/admin.js?v=20260921-7" defer></script>
+  <script src="../js/report-export.js?v=20260921-7" defer></script>
 </body>
 </html>

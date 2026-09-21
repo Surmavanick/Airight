@@ -106,6 +106,7 @@ const els = {
   emptyState: $("#emptyState"),
   loadingState: $("#loadingState"),
   loadingText: $("#loadingText"),
+  importStages: $("#importStages"),
   errorState: $("#errorState"),
   errorText: $("#errorText"),
   errorRawWrap: $("#errorRawWrap"),
@@ -156,6 +157,7 @@ const state = {
 
 let evidenceDbPromise = null;
 let copilotDraftSaveTimer = null;
+let importStageTimers = [];
 
 class ApiError extends Error {
   constructor(message, status, raw) {
@@ -2112,9 +2114,9 @@ async function analyze(type) {
 
   if (type === "code") {
     const repository = parseGithubRootInput(els.repoUrl.value);
-    setLoading(`Importing ${repository.owner}/${repository.repo} from GitHub…`);
+    startImportStages(`${repository.owner}/${repository.repo}`);
     const response = await postDetect("github", JSON.stringify({ repositoryUrl: repository.url }), { "Content-Type": "application/json" });
-    setLoading("Building the stable repository mix and 51% Human plan…");
+    setImportStage(3, "Stage 3 of 3 — Building the repository report…");
     const detection = normalizeCodeResult(response.data);
     return {
       source: "github",
@@ -2243,11 +2245,47 @@ function setBusy(busy) {
   if (busy) {
     showOnly(els.loadingState);
     updateFlow("score");
+  } else {
+    stopImportStages();
   }
 }
 
 function setLoading(text) {
   els.loadingText.textContent = text;
+}
+
+function setImportStage(stage, message) {
+  const current = Math.max(1, Math.min(3, Number(stage) || 1));
+  els.loadingState.classList.add("is-importing");
+  els.importStages.hidden = false;
+  $$('[data-import-stage]', els.importStages).forEach((item, index) => {
+    const itemStage = index + 1;
+    item.classList.toggle("is-done", itemStage < current);
+    item.classList.toggle("is-current", itemStage === current);
+    if (itemStage === current) item.setAttribute("aria-current", "step");
+    else item.removeAttribute("aria-current");
+  });
+  setLoading(message);
+}
+
+function stopImportStages() {
+  for (const timer of importStageTimers) window.clearTimeout(timer);
+  importStageTimers = [];
+  els.loadingState.classList.remove("is-importing");
+  els.importStages.hidden = true;
+  $$('[data-import-stage]', els.importStages).forEach((item) => {
+    item.classList.remove("is-done", "is-current");
+    item.removeAttribute("aria-current");
+  });
+}
+
+function startImportStages(repositoryName) {
+  stopImportStages();
+  setImportStage(1, `Stage 1 of 3 — Connecting to ${repositoryName}…`);
+  importStageTimers = [
+    window.setTimeout(() => setImportStage(2, "Stage 2 of 3 — Sampling source files…"), 1000),
+    window.setTimeout(() => setImportStage(3, "Stage 3 of 3 — Building the repository report…"), 2000),
+  ];
 }
 
 function showError(error) {
@@ -2763,7 +2801,7 @@ function taskItem(record, task) {
           <div class="task__top-actions">
             <span class="prio prio--${task.priority}">${task.priority}</span>
             ${task.done ? `<span class="task-completion-status">Confirmed done</span><button class="task-reopen" type="button" data-task-reopen="${escapeHtml(task.id)}">Reopen</button>` : selectedForCompletion ? `<button class="task-confirm" type="button" data-task-confirm="${escapeHtml(task.id)}">Confirm done</button>` : previouslyMarkedDone ? `<span class="task-completion-status task-completion-status--legacy">Previously marked · reconfirm</span>` : ""}
-            <button class="task-recheck" type="button" data-recheck-task="${escapeHtml(task.id)}" ${recheckPending || planPending || !copilotConfigured ? "disabled" : ""} ${recheckPending || planPending ? "aria-busy=\"true\"" : ""} ${copilotConfigured ? "" : "title=\"Aright evidence review is unavailable\""}>${recheckPending ? "Checking evidence…" : recheck ? "Re-check evidence again" : "Re-check evidence"}</button>
+            <button class="task-recheck" type="button" data-recheck-task="${escapeHtml(task.id)}" ${recheckPending || planPending || !copilotConfigured ? "disabled" : ""} ${recheckPending ? "aria-busy=\"true\"" : ""} ${copilotConfigured ? "" : "title=\"Aright evidence review is unavailable\""}>${recheckPending ? "Checking evidence…" : recheck ? "Re-check evidence again" : "Re-check evidence"}</button>
           </div>
         </div>
         <p class="task__detail">${escapeHtml(task.detail)}</p>
@@ -2807,7 +2845,7 @@ function planCard(record) {
   const planReady = hasUsableArightPlan(record);
   const planMessage = state.copilotMessages.get(record.id);
   const planStatus = planPending
-    ? `<div class="aright-plan-status aright-plan-status--fallback" role="status"><div><strong>Plan ready</strong><p>The checklist is ready. Aright is adding optional detail in the background.</p></div></div>`
+    ? `<div class="aright-plan-status aright-plan-status--generating" role="status" aria-live="polite" aria-atomic="true" aria-busy="true"><span class="aright-plan-status__spinner" aria-hidden="true"></span><span class="aright-plan-status__copy"><strong>Generating Aright plan</strong><small>Your checklist is ready. Aright is adding optional detail.</small></span></div>`
     : !planReady
       ? `<div class="aright-plan-status aright-plan-status--fallback" role="status"><div><strong>Plan ready</strong><p>${escapeHtml(planMessage?.text || "The checklist is ready. Optional detail is unavailable right now.")}</p></div>${isEvidenceCopilotConfigured() ? `<button class="btn btn--outline btn--compact" type="button" data-copilot-generate>Retry details</button>` : ""}</div>`
       : "";
@@ -2885,7 +2923,7 @@ function copilotDraftCard(record) {
     <section class="copilot-draft" aria-labelledby="copilot-draft-title">
       <div class="copilot-draft__head">
         <div><p class="panel-kicker">Aright plan</p><h3 id="copilot-draft-title">Editable Human-work statement</h3><p>${escapeHtml(sourceLabel)}. AI-assisted using OpenAI; review every claim before export.</p></div>
-        <button class="btn btn--outline copilot-draft__refresh" type="button" data-copilot-generate ${pending || !configured ? "disabled" : ""} ${pending ? "aria-busy=\"true\"" : ""}>${pending ? "Preparing…" : configured ? copilot?.generatedAt ? "Refresh Aright plan" : "Generate Aright plan" : "Aright plan unavailable"}</button>
+        <button class="btn btn--outline copilot-draft__refresh" type="button" data-copilot-generate ${pending || !configured ? "disabled" : ""}>${configured ? copilot?.generatedAt ? "Refresh Aright plan" : "Generate Aright plan" : "Aright plan unavailable"}</button>
       </div>
       ${copilot?.summary ? `<p class="copilot-draft__summary">${escapeHtml(copilot.summary)}</p>` : ""}
       <label class="sr-only" for="copilot-evidence-draft-${escapeHtml(record.id)}">Editable Human-work evidence draft</label>
