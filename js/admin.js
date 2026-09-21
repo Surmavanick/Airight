@@ -12,6 +12,11 @@ const STORED_TEXT_LIMIT = 60000;
 const QUOTES_VISIBLE = 5;
 const AUDIO_MAX_SECONDS = 60.5;
 const HUMAN_TARGET_PCT = 51;
+const TASK_EVIDENCE_MAX_BYTES = 20 * MB;
+const TASK_EVIDENCE_MAX_FILES = 5;
+const TASK_EVIDENCE_RECORD_MAX_BYTES = 50 * MB;
+const TASK_EVIDENCE_DB = "aright.task-evidence.v1";
+const TASK_EVIDENCE_STORE = "files";
 const requestedApiPort = Number(new URLSearchParams(location.search).get("apiPort"));
 const fileApiPort = Number.isInteger(requestedApiPort) && requestedApiPort > 0 && requestedApiPort <= 65535 ? requestedApiPort : 8000;
 const API_BASE = location.protocol === "file:" ? `http://127.0.0.1:${fileApiPort}` : "";
@@ -105,6 +110,7 @@ const els = {
   errorRawWrap: $("#errorRawWrap"),
   errorRaw: $("#errorRaw"),
   report: $("#report"),
+  evidenceLive: $("#evidenceLive"),
   kpis: $("#kpis"),
   registerSearch: $("#registerSearch"),
   registerStatusFilter: $("#registerStatusFilter"),
@@ -138,7 +144,11 @@ const state = {
   currentId: null,
   storageFailed: false,
   busy: false,
+  evidenceMessages: new Map(),
+  evidencePending: new Set(),
 };
+
+let evidenceDbPromise = null;
 
 class ApiError extends Error {
   constructor(message, status, raw) {
@@ -303,6 +313,82 @@ function initials(value) {
   return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : parts[0]?.slice(0, 2) || "?").toUpperCase();
 }
 
+function normalizeTaskEvidence(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => {
+      const id = String(item.id || `evidence-${index + 1}`).replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 100);
+      const sha = String(item.sha256 || "").toLowerCase();
+      return {
+        id,
+        name: String(item.name || "Evidence file").slice(0, 240),
+        size: Math.max(0, Math.round(toNumber(item.size) || 0)),
+        mime: String(item.mime || "application/octet-stream").slice(0, 120),
+        sha256: /^[a-f0-9]{64}$/.test(sha) ? sha : null,
+        addedAt: normalizeIsoDate(item.addedAt) || new Date().toISOString(),
+        storage: "browser-indexeddb",
+      };
+    })
+    .filter((item) => item.id && !seen.has(item.id) && seen.add(item.id))
+    .slice(0, TASK_EVIDENCE_MAX_FILES);
+}
+
+function evidenceStorageKey(recordId, taskId, evidenceId) {
+  return `${recordId}:${taskId}:${evidenceId}`;
+}
+
+function openEvidenceDb() {
+  if (evidenceDbPromise) return evidenceDbPromise;
+  evidenceDbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("Browser evidence storage is unavailable."));
+      return;
+    }
+    const request = window.indexedDB.open(TASK_EVIDENCE_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(TASK_EVIDENCE_STORE)) {
+        request.result.createObjectStore(TASK_EVIDENCE_STORE, { keyPath: "key" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Browser evidence storage could not be opened."));
+    request.onblocked = () => reject(new Error("Browser evidence storage is blocked by another tab."));
+  }).catch((error) => {
+    evidenceDbPromise = null;
+    throw error;
+  });
+  return evidenceDbPromise;
+}
+
+async function evidenceDbRequest(mode, operation) {
+  const db = await openEvidenceDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(TASK_EVIDENCE_STORE, mode);
+    const store = transaction.objectStore(TASK_EVIDENCE_STORE);
+    const request = operation(store);
+    let result;
+    request.onsuccess = () => { result = request.result; };
+    request.onerror = () => reject(request.error || new Error("The evidence file could not be stored."));
+    transaction.oncomplete = () => resolve(result);
+    transaction.onabort = () => reject(transaction.error || new Error("The evidence storage transaction was cancelled."));
+    transaction.onerror = () => reject(transaction.error || new Error("The evidence storage transaction failed."));
+  });
+}
+
+function storeTaskEvidenceFile(key, file) {
+  return evidenceDbRequest("readwrite", (store) => store.put({ key, blob: file, savedAt: new Date().toISOString() }));
+}
+
+function getTaskEvidenceFile(key) {
+  return evidenceDbRequest("readonly", (store) => store.get(key));
+}
+
+function deleteTaskEvidenceFile(key) {
+  return evidenceDbRequest("readwrite", (store) => store.delete(key));
+}
+
 function newId() {
   const time = Date.now().toString(36).toUpperCase().slice(-5);
   const random = Math.random().toString(36).slice(2, 5).toUpperCase();
@@ -350,6 +436,7 @@ function normalizeStoredRecord(value) {
           detail: String(task.detail || "Confirm the supporting evidence before completing review."),
           done: Boolean(task.done),
           quotes: Array.isArray(task.quotes) ? task.quotes.filter((item) => typeof item === "string") : [],
+          evidence: normalizeTaskEvidence(task.evidence),
         }))
         .filter((task) => task.id && !seenTaskIds.has(task.id) && seenTaskIds.add(task.id))
     : [];
@@ -1791,7 +1878,7 @@ function showOnly(target) {
     composer: ["Screen a new asset", "Run a detector, assess evidence readiness and create a prioritized review plan."],
     loading: ["Analyzing asset", "Aright is importing the source, screening available signals and building the review plan."],
     error: ["Analysis needs attention", "Review the error, adjust the source or connection, and try the analysis again."],
-    report: ["Analysis report", "Repository intelligence, human-work targets and evidence are organized in one continuous workspace."],
+    report: ["Analysis report", "Detector findings, human-work targets and supporting evidence are organized in one continuous workspace."],
   }[mode];
   els.analyzeTitle.textContent = heading[0];
   els.analyzeLead.textContent = heading[1];
@@ -1980,7 +2067,7 @@ function highlightText(text, sentences) {
   return html + escapeHtml(text.slice(cursor));
 }
 
-function textFindings(detection) {
+function textFindings(detection, { embedded = false } = {}) {
   const external = usesAiOrNot(detection);
   const chips = [`<span class="stat-chip"><b>${detection.aiPct}%</b> ${external ? "AI or Not text score" : "AI-class model score"}</span>`];
   if (detection.textWords != null) {
@@ -1988,9 +2075,17 @@ function textFindings(detection) {
   }
   chips.push(`<span class="stat-chip"><b>${detection.flaggedTotal ?? detection.flagged.length}</b> high-score passages</span>`);
 
-  const body = detection.text
+  const highlightedDocument = detection.text
     ? `<div class="doc">${highlightText(detection.text, detection.flagged)}</div>
        <p class="legend"><i aria-hidden="true"></i>Highlighted: ${external ? "provider-returned text blocks" : "word windows"} with an AI-class score of 75% or more</p>`
+    : "";
+  const body = detection.text
+    ? detection.text.length > 900
+      ? `<details class="doc-disclosure">
+           <summary><span>Review full analyzed text</span><small>${detection.text.length.toLocaleString()} characters</small></summary>
+           <div class="doc-disclosure__body">${highlightedDocument}</div>
+         </details>`
+      : highlightedDocument
     : `<p class="note">No passage text is stored for this record.</p>`;
   const stats = detection.annotationStats || {};
   const totalBlocks = toNumber(stats.totalBlocks) ?? "additional";
@@ -2002,10 +2097,16 @@ function textFindings(detection) {
     : "";
 
   return `
-    ${detection.verdict ? `<p class="verdict">${escapeHtml(detection.verdict)}</p>` : ""}
-    <div class="stats-row">${chips.join("")}</div>
-    ${body}
-    ${truncationNotice}`;
+    <div class="finding-layout finding-layout--text${embedded ? " is-embedded" : ""}">
+      <aside class="finding-insights">
+        <p class="panel-kicker">Screening snapshot</p>
+        ${detection.verdict ? `<p class="verdict">${escapeHtml(detection.verdict)}</p>` : ""}
+        <div class="stats-row">${chips.join("")}</div>
+        ${truncationNotice}
+        <p class="note">Review highlighted passages in context. A model score alone does not establish who wrote the text.</p>
+      </aside>
+      <div class="finding-main">${body}</div>
+    </div>`;
 }
 
 function detectionCard(record) {
@@ -2051,18 +2152,27 @@ function detectionCard(record) {
         ? `<p class="callout callout--info">${icon("i-alert")}<span>This saved record used an older local-only image check. Choose “Analyze a new version” and upload the original again to run AI or Not.</span></p>`
         : `<p class="callout callout--info">${icon("i-alert")}<span>This result uses the local Community Forensics model only. Configure AI or Not to add an external provider signal.</span></p>`;
     body = `
-      <div class="media-preview">
-        ${preview ? `<img src="${escapeHtml(preview)}" alt="Analyzed image: ${escapeHtml(record.name)}" />` : missingPreview}
-        <div>
-          <p class="verdict">${escapeHtml(detection.verdict || aiHeadline(detection.aiPct, detection))}</p>
-          <div class="stats-row"><span class="stat-chip"><b>${detection.aiPct}%</b> ${signals.length ? "AI or Not AI-class score" : "local synthetic-image score"}</span></div>
+      <div class="finding-layout finding-layout--image media-preview">
+        <figure class="finding-media">
+          <div class="finding-media__stage">${preview ? `<img src="${escapeHtml(preview)}" alt="Analyzed image: ${escapeHtml(record.name)}" />` : missingPreview}</div>
+          <figcaption><strong>Analyzed preview</strong><span>${escapeHtml(file.name)} · ${formatBytes(file.size)}</span></figcaption>
+        </figure>
+        <div class="finding-insights">
+          <section class="finding-verdict">
+            <p class="panel-kicker">Primary finding</p>
+            <p class="verdict">${escapeHtml(detection.verdict || aiHeadline(detection.aiPct, detection))}</p>
+            <p class="note">${signals.length ? "The named provider response and its original score are preserved below." : "This record contains one local synthetic-image screening signal."}</p>
+          </section>
+          ${localOnlyNotice}
+          ${reviewNotice}
+          ${signalCards ? `<section class="finding-panel"><header><span>Detector trace</span><small>${plural(signals.length, "named signal")}</small></header><div class="detector-signals">${signalCards}</div></section>` : ""}
+          ${generatorHints ? `<section class="finding-panel"><header><span>Generator similarities</span><small>Context only</small></header><div class="stats-row">${generatorHints}</div><p class="note">Generator hints are model similarities, not generator identification.</p></section>` : ""}
+          <section class="finding-panel finding-panel--provenance">
+            <header><span>Provenance metadata</span><small>${detection.c2pa ? "Reported" : "Not reported"}</small></header>
+            <p>${detection.c2pa ? `C2PA status: <strong>${escapeHtml(detection.c2pa.status || "unknown")}</strong>.` : "No C2PA status was returned for this record."} Missing metadata does not prove that an image is human-made.</p>
+          </section>
         </div>
-      </div>
-      ${localOnlyNotice}
-      ${reviewNotice}
-      ${signalCards ? `<div class="detector-signals">${signalCards}</div>` : ""}
-      ${generatorHints ? `<div class="stats-row">${generatorHints}</div><p class="note">Generator hints are model similarities, not generator identification.</p>` : ""}
-      ${detection.c2pa ? `<p class="note note--block">C2PA status reported by AI or Not: <strong>${escapeHtml(detection.c2pa.status || "unknown")}</strong>. Missing metadata does not prove that an image is human-made.</p>` : ""}`;
+      </div>`;
   } else if (record.type === "code") {
     const repository = record.repository || detection.repository || {};
     const languages = Array.isArray(repository.languages) ? repository.languages : [];
@@ -2175,14 +2285,19 @@ function detectionCard(record) {
       })
       .join("");
     body = `
-      <p class="verdict">${escapeHtml(detection.verdict || aiHeadline(detection.aiPct, detection))}</p>
-      <div class="stats-row">
-        <span class="stat-chip"><b>${detection.aiPct}%</b> median frame-model score</span>
-        <span class="stat-chip"><b>${flagged.length}</b> of ${scanned.length} high-signal frames</span>
-        ${failed ? `<span class="stat-chip"><b>${failed}</b> not scored</span>` : ""}
-      </div>
-      <div class="frames">${frames}</div>
-      <p class="note">Frame-level synthetic-image screening does not test motion, face swaps, or the soundtrack.</p>`;
+      <div class="finding-layout finding-layout--video">
+        <aside class="finding-insights">
+          <p class="panel-kicker">Frame screening</p>
+          <p class="verdict">${escapeHtml(detection.verdict || aiHeadline(detection.aiPct, detection))}</p>
+          <div class="stats-row">
+            <span class="stat-chip"><b>${detection.aiPct}%</b> median frame-model score</span>
+            <span class="stat-chip"><b>${flagged.length}</b> of ${scanned.length} high-signal frames</span>
+            ${failed ? `<span class="stat-chip"><b>${failed}</b> not scored</span>` : ""}
+          </div>
+          <p class="callout callout--info">${icon("i-alert")}<span>Frame screening does not test motion, face swaps, or the soundtrack.</span></p>
+        </aside>
+        <div class="finding-main"><div class="frames">${frames}</div></div>
+      </div>`;
   } else {
     intro = `${escapeHtml(file.name)} · ${formatBytes(file.size)}`;
     const player = file && preview ? `<audio class="player" controls src="${escapeHtml(preview)}"></audio>` : "";
@@ -2191,17 +2306,14 @@ function detectionCard(record) {
     const threshold = detection.model?.threshold || 0.939693808555603;
     const high = segments.filter((segment) => segment.score >= threshold).length;
     const inputChecks = detection.inputChecks || {};
-    body = external ? `
-      ${player}
+    const audioInsights = external ? `
       <p class="verdict">${escapeHtml(detection.verdict || aiHeadline(detection.aiPct, detection))}</p>
       <div class="stats-row">
         <span class="stat-chip"><b>${detection.aiPct}%</b> AI or Not voice score</span>
         ${detection.duration == null ? "" : `<span class="stat-chip"><b>${formatTime(detection.duration)}</b> provider-tested audio</span>`}
       </div>
-      <p class="callout callout--info">${icon("i-alert")}<span>This external model screens spoken voice for AI generation. It does not analyze AI music, establish identity, or prove authorship.</span></p>
-      ${detection.transcript?.checked ? `<div style="margin-top:16px"><h3 class="group-title">Separate script analysis</h3>${textFindings(detection.transcript)}</div>` : ""}`
+      <p class="callout callout--info">${icon("i-alert")}<span>This external model screens spoken voice for AI generation. It does not analyze AI music, establish identity, or prove authorship.</span></p>`
     : `
-      ${player}
       <p class="verdict">${escapeHtml(detection.verdict || aiHeadline(detection.aiPct, detection))}</p>
       <div class="stats-row">
         <span class="stat-chip"><b>${detection.aiPct}%</b> speech anti-spoofing score</span>
@@ -2211,17 +2323,22 @@ function detectionCard(record) {
       <p class="callout callout--info">${icon("i-alert")}<span>This research model detects synthetic or cloned speech. It does not detect AI-generated music, melodies, or non-speech sound.</span></p>
       ${detection.model?.policyValidated === false ? `<p class="callout callout--info">${icon("i-alert")}<span>The maximum-over-windows score and multi-window verdict rule are an uncalibrated Aright policy, not a model-validated probability. Use them as a review signal only.</span></p>` : ""}
       ${inputChecks.shortClipRepeatedToModelWindow ? `<p class="callout callout--info">${icon("i-alert")}<span>This clip was shorter than the model's 4.04-second input window, so the captured audio was repeated to fill that window. Interpret the score cautiously.</span></p>` : ""}
-      <p class="note">Input screening uses an audibility/RMS gate only; it does not independently verify that the recording contains speech.</p>
-      ${detection.transcript?.checked ? `<div style="margin-top:16px"><h3 class="group-title">Separate script analysis</h3>${textFindings(detection.transcript)}</div>` : ""}`;
+      <p class="note">Input screening uses an audibility/RMS gate only; it does not independently verify that the recording contains speech.</p>`;
+    body = `
+      <div class="finding-layout finding-layout--audio${player ? "" : " is-single"}">
+        ${player ? `<div class="finding-media finding-media--audio"><p class="panel-kicker">Source playback</p>${player}<p>Playback is local to this browser session.</p></div>` : ""}
+        <aside class="finding-insights"><p class="panel-kicker">Voice screening</p>${audioInsights}</aside>
+      </div>
+      ${detection.transcript?.checked ? `<section class="finding-transcript"><h3 class="group-title">Separate script analysis</h3>${textFindings(detection.transcript, { embedded: true })}</section>` : ""}`;
   }
 
   const findingsTitle = record.type === "code" ? "Repository intelligence" : "What the models found";
   return `
-    <article class="box section-card">
+    <article class="box section-card analysis-findings analysis-findings--${record.type}">
       <div class="section-card__head">
         <div><h2><span class="step-no">2</span>${findingsTitle}</h2><p>${intro}</p></div>
       </div>
-      ${body}
+      <div class="finding-body">${body}</div>
     </article>`;
 }
 
@@ -2230,17 +2347,39 @@ function taskItem(task) {
   const expanded = state.expandedQuotes.has(`${state.currentId}:${task.id}`);
   const visible = expanded ? quotes : quotes.slice(0, QUOTES_VISIBLE);
   const hiddenCount = quotes.length - visible.length;
+  const attachments = normalizeTaskEvidence(task.evidence);
+  const evidenceMessage = state.evidenceMessages.get(`${state.currentId}:${task.id}`);
+  const evidencePending = state.evidencePending.has(`${state.currentId}:${task.id}`);
+  const evidenceItems = attachments.map((item) => `
+    <li class="task-evidence__item">
+      <div>
+        <strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
+        <span>${formatBytes(item.size)} · ${item.sha256 ? `SHA-256 ${escapeHtml(compactFingerprint(item.sha256))}` : "Hash unavailable"}</span>
+      </div>
+      <div class="task-evidence__actions">
+        <button class="text-action" type="button" aria-label="Download ${escapeHtml(item.name)} evidence for ${escapeHtml(task.title)}" data-evidence-download="${escapeHtml(item.id)}" data-evidence-task="${escapeHtml(task.id)}">Download</button>
+        <button class="text-action text-action--danger" type="button" aria-label="Remove ${escapeHtml(item.name)} evidence from ${escapeHtml(task.title)}" data-evidence-remove="${escapeHtml(item.id)}" data-evidence-task="${escapeHtml(task.id)}">Remove</button>
+      </div>
+    </li>`).join("");
   return `
     <li class="task${task.done ? " is-done" : ""}">
       <input type="checkbox" id="task-${task.id}" data-task="${task.id}" ${task.done ? "checked" : ""} />
       <div class="task__body">
         <div class="task__top">
           <label class="task__title" for="task-${task.id}">${escapeHtml(task.title)}</label>
-          <span class="prio prio--${task.priority}">${task.priority}</span>
+          <div class="task__top-actions">
+            <span class="prio prio--${task.priority}">${task.priority}</span>
+            <input type="file" id="task-evidence-${escapeHtml(task.id)}" data-evidence-input="${escapeHtml(task.id)}" multiple hidden />
+            <button class="task-evidence__add" type="button" aria-label="Attach optional evidence to ${escapeHtml(task.title)}" title="Attach optional supporting evidence" data-evidence-add="${escapeHtml(task.id)}" ${evidencePending ? "disabled aria-busy=\"true\"" : ""}>${icon("i-upload")}${evidencePending ? "Saving…" : "Evidence"}${attachments.length ? `<b aria-label="${plural(attachments.length, "attached file")}">${attachments.length}</b>` : ""}</button>
+          </div>
         </div>
         <p class="task__detail">${escapeHtml(task.detail)}</p>
         ${visible.length ? `<ul class="task__quotes">${visible.map((q) => `<li>${escapeHtml(q)}</li>`).join("")}</ul>` : ""}
         ${hiddenCount > 0 ? `<button class="task__more" type="button" data-more="${task.id}">Show ${hiddenCount} more</button>` : ""}
+        ${evidenceItems || evidenceMessage ? `<div class="task-evidence">
+          ${evidenceItems ? `<ul class="task-evidence__list">${evidenceItems}</ul>` : ""}
+          ${evidenceMessage ? `<p class="task-evidence__message task-evidence__message--${escapeHtml(evidenceMessage.tone || "info")}">${escapeHtml(evidenceMessage.text)}</p>` : ""}
+        </div>` : ""}
       </div>
     </li>`;
 }
@@ -2276,14 +2415,27 @@ function planCard(record) {
         <div><h2><span class="step-no">3</span>Action plan: what to fix</h2><p>Highest priority first. Checking a task records your self-attested completion. Only evidence and licence tasks can update readiness; none change the original detector or illustrative estimate.</p></div>
       </div>
       ${humanGoal}
-      ${tasks}
-      <h3 class="group-title">Handled by Aright</h3>
-      <ul class="auto-list">${automatedSteps(record).map((step) => `<li>${icon("i-check")}<span>${escapeHtml(step)}</span></li>`).join("")}</ul>
+      <div class="plan-layout">
+        <section class="plan-layout__tasks" aria-label="Your action checklist">${tasks}</section>
+        <aside class="plan-layout__aside" aria-label="Automated work and evidence guidance">
+          <div class="plan-evidence-note">
+            <span>${icon("i-upload")}</span>
+            <div><strong>Supporting evidence is optional</strong><p>Attach licences, source files, approvals or before/after exports to the relevant task. Checking a task still records your self-attested completion.</p></div>
+          </div>
+          <details class="plan-automated" ${window.matchMedia("(min-width: 701px)").matches ? "open" : ""}>
+            <summary>Handled by Aright</summary>
+            <ul class="auto-list">${automatedSteps(record).map((step) => `<li>${icon("i-check")}<span>${escapeHtml(step)}</span></li>`).join("")}</ul>
+          </details>
+        </aside>
+      </div>
     </article>`;
 }
 
 function protectionCard(record, status) {
   const open = openTasks(record).length;
+  const completed = record.tasks.length - open;
+  const attachments = record.tasks.flatMap((task) => normalizeTaskEvidence(task.evidence));
+  const evidencedTasks = record.tasks.filter((task) => normalizeTaskEvidence(task.evidence).length > 0).length;
   const sentence = {
     "at-risk": `${plural(open, "open task")} before the final review can be completed.`,
     action: `${plural(open, "open task")} before the final review can be completed.`,
@@ -2313,17 +2465,28 @@ function protectionCard(record, status) {
       <div class="section-card__head">
         <div><h2><span class="step-no">4</span>Review &amp; protection</h2><p>${sentence}</p></div>
       </div>
-      <dl class="evidence">
-        <dt>Record ID</dt><dd class="mono">${escapeHtml(record.id)}</dd>
-        <dt>Analyzed</dt><dd>${escapeHtml(formatDate(record.createdAt))}</dd>
-        <dt>Original</dt><dd>${original}</dd>
-        <dt>${record.type === "code" ? "Repository/tree fingerprint" : "SHA-256"}</dt><dd class="hash-value">${fingerprint}</dd>
-        <dt>Detector</dt><dd>${detector}</dd>
-        ${record.protectedAt ? `<dt>Review completed</dt><dd>${escapeHtml(formatDate(record.protectedAt))}</dd>` : ""}
-      </dl>
-      <div class="actions">
-        ${primary}
-        <button class="btn btn--outline" type="button" data-action="download">${icon("i-download")}Download evidence</button>
+      <div class="review-layout">
+        <dl class="evidence">
+          <dt>Record ID</dt><dd class="mono">${escapeHtml(record.id)}</dd>
+          <dt>Analyzed</dt><dd>${escapeHtml(formatDate(record.createdAt))}</dd>
+          <dt>Original</dt><dd>${original}</dd>
+          <dt>${record.type === "code" ? "Repository/tree fingerprint" : "SHA-256"}</dt><dd class="hash-value">${fingerprint}</dd>
+          <dt>Detector</dt><dd>${detector}</dd>
+          ${record.protectedAt ? `<dt>Review completed</dt><dd>${escapeHtml(formatDate(record.protectedAt))}</dd>` : ""}
+        </dl>
+        <aside class="review-package" aria-label="Evidence package summary">
+          <p class="panel-kicker">Evidence package</p>
+          <div class="review-package__stats">
+            <span><strong>${completed}/${record.tasks.length}</strong> tasks done</span>
+            <span><strong>${attachments.length}</strong> ${attachments.length === 1 ? "file" : "files"}</span>
+            <span><strong>${evidencedTasks}</strong> tasks with files</span>
+          </div>
+          <p>Attachments are optional and stay in this browser. The JSON evidence download includes their metadata and SHA-256 hashes, not the file bytes.</p>
+          <div class="actions">
+            ${primary}
+            <button class="btn btn--outline" type="button" data-action="download">${icon("i-download")}Download evidence JSON</button>
+          </div>
+        </aside>
       </div>
       <p class="disclaimer">Model scores are screening signals, not proof of authorship, infringement, or legal protection. Checklist completion is self-attested; the downloaded JSON is not a signed or tamper-evident legal record. IPR readiness is documentation guidance, not legal advice.</p>
     </article>`;
@@ -2641,7 +2804,17 @@ function evidenceOf(record) {
       selfAttestedCompletion: targetDone,
       warning: "A planning metric; it does not alter the original detector/illustrative mix or prove authorship.",
     } : null,
-    actionPlan: record.tasks.map(({ id, title, detail, priority, done, humanDeltaPct, target }) => ({ id, title, detail, priority, done, humanDeltaPct: humanDeltaPct || 0, target: target || null })),
+    actionPlan: record.tasks.map(({ id, title, detail, priority, done, humanDeltaPct, target, evidence }) => ({
+      id,
+      title,
+      detail,
+      priority,
+      done,
+      humanDeltaPct: humanDeltaPct || 0,
+      target: target || null,
+      supportingEvidence: normalizeTaskEvidence(evidence),
+    })),
+    attachmentPolicy: "Supporting file bytes remain in this browser's IndexedDB. This JSON exports filenames, sizes, timestamps and SHA-256 hashes only.",
     rawModelRecord: record.raw,
   };
 }
@@ -2653,6 +2826,144 @@ function downloadJson(filename, data) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function setTaskEvidenceMessage(recordId, taskId, text, tone = "info") {
+  state.evidenceMessages.set(`${recordId}:${taskId}`, { text, tone });
+  if (els.evidenceLive) {
+    els.evidenceLive.textContent = "";
+    window.requestAnimationFrame(() => { els.evidenceLive.textContent = text; });
+  }
+}
+
+function taskEvidenceId() {
+  return window.crypto?.randomUUID?.() || `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function attachTaskEvidence(record, task, files) {
+  const pendingKey = `${record.id}:${task.id}`;
+  if (state.evidencePending.has(pendingKey)) return;
+  const current = normalizeTaskEvidence(task.evidence);
+  const available = Math.max(0, TASK_EVIDENCE_MAX_FILES - current.length);
+  const selected = [...files].slice(0, available);
+  const ignoredCount = Math.max(0, files.length - selected.length);
+  if (!selected.length) {
+    setTaskEvidenceMessage(record.id, task.id, `Each task can keep up to ${TASK_EVIDENCE_MAX_FILES} evidence files.`, "error");
+    renderReport(record);
+    return;
+  }
+
+  state.evidencePending.add(pendingKey);
+  setTaskEvidenceMessage(record.id, task.id, `Preparing ${plural(selected.length, "evidence file")}…`);
+  if (state.currentId === record.id) renderReport(record);
+  let added = 0;
+  let unhashed = 0;
+  const skipped = ignoredCount ? [`${plural(ignoredCount, "extra file")} ignored because the task limit is ${TASK_EVIDENCE_MAX_FILES}`] : [];
+  try {
+    let recordBytes = record.tasks.flatMap((item) => normalizeTaskEvidence(item.evidence)).reduce((sum, item) => sum + item.size, 0);
+    for (const file of selected) {
+      if (!file.size || file.size > TASK_EVIDENCE_MAX_BYTES) {
+        skipped.push(`${file.name} must be between 1 byte and ${formatBytes(TASK_EVIDENCE_MAX_BYTES)}`);
+        continue;
+      }
+      if (recordBytes + file.size > TASK_EVIDENCE_RECORD_MAX_BYTES) {
+        skipped.push(`${file.name} would exceed the ${formatBytes(TASK_EVIDENCE_RECORD_MAX_BYTES)} record limit`);
+        continue;
+      }
+      const estimate = navigator.storage?.estimate ? await navigator.storage.estimate().catch(() => null) : null;
+      if (estimate?.quota && estimate.usage + file.size > estimate.quota * 0.9) {
+        skipped.push(`${file.name} would leave too little browser storage`);
+        continue;
+      }
+      const evidence = {
+        id: taskEvidenceId(),
+        name: file.name,
+        size: file.size,
+        mime: file.type || "application/octet-stream",
+        sha256: await sha256(file),
+        addedAt: new Date().toISOString(),
+        storage: "browser-indexeddb",
+      };
+      if (!evidence.sha256) unhashed += 1;
+      await storeTaskEvidenceFile(evidenceStorageKey(record.id, task.id, evidence.id), file);
+      if (!state.assets.some((item) => item.id === record.id)) {
+        await deleteTaskEvidenceFile(evidenceStorageKey(record.id, task.id, evidence.id)).catch(() => {});
+        skipped.push(`${file.name} was not kept because the analysis record was removed`);
+        continue;
+      }
+      current.push(evidence);
+      recordBytes += file.size;
+      added += 1;
+    }
+  } catch {
+    skipped.push("A file could not be fingerprinted or stored by this browser");
+  } finally {
+    state.evidencePending.delete(pendingKey);
+  }
+
+  task.evidence = current;
+  if (!state.assets.some((item) => item.id === record.id)) return;
+  if (added) {
+    const success = unhashed ? `${plural(added, "file")} attached; SHA-256 was unavailable for ${unhashed}.` : `${plural(added, "file")} attached and fingerprinted in this browser.`;
+    const note = skipped.length ? `${success} ${skipped.join("; ")}.` : success;
+    setTaskEvidenceMessage(record.id, task.id, note, skipped.length ? "warning" : "ok");
+    saveAssets();
+    renderCollections();
+  } else {
+    setTaskEvidenceMessage(record.id, task.id, skipped.join("; ") || "No evidence file was attached.", "error");
+  }
+  state.reportTabs.set(record.id, "plan");
+  if (state.currentId === record.id) {
+    renderReport(record);
+    window.requestAnimationFrame(() => $(`[data-evidence-add="${task.id}"]`, els.report)?.focus({ preventScroll: true }));
+  }
+}
+
+async function downloadTaskEvidence(record, task, evidenceId) {
+  const evidence = normalizeTaskEvidence(task.evidence).find((item) => item.id === evidenceId);
+  if (!evidence) return;
+  try {
+    const stored = await getTaskEvidenceFile(evidenceStorageKey(record.id, task.id, evidence.id));
+    if (!stored?.blob) throw new Error("missing");
+    downloadBlob(evidence.name, stored.blob);
+    setTaskEvidenceMessage(record.id, task.id, `Downloaded ${evidence.name}.`, "ok");
+  } catch {
+    setTaskEvidenceMessage(record.id, task.id, "The attachment bytes are no longer in this browser. The evidence manifest still keeps its filename and hash.", "error");
+    if (state.currentId === record.id) renderReport(record);
+  }
+}
+
+async function removeTaskEvidence(record, task, evidenceId) {
+  const evidence = normalizeTaskEvidence(task.evidence).find((item) => item.id === evidenceId);
+  if (!evidence || !window.confirm(`Remove “${evidence.name}” from this browser's evidence storage?`)) return;
+  try {
+    await deleteTaskEvidenceFile(evidenceStorageKey(record.id, task.id, evidence.id));
+    task.evidence = normalizeTaskEvidence(task.evidence).filter((item) => item.id !== evidence.id);
+    setTaskEvidenceMessage(record.id, task.id, `${evidence.name} was removed.`, "info");
+    saveAssets();
+    renderCollections();
+    if (state.currentId === record.id) {
+      renderReport(record);
+      window.requestAnimationFrame(() => $(`[data-evidence-add="${task.id}"]`, els.report)?.focus({ preventScroll: true }));
+    }
+  } catch {
+    setTaskEvidenceMessage(record.id, task.id, "This browser could not remove the attachment. Try again after reloading.", "error");
+    if (state.currentId === record.id) renderReport(record);
+  }
+}
+
+async function removeRecordEvidenceFiles(record) {
+  const removals = record.tasks.flatMap((task) => normalizeTaskEvidence(task.evidence).map((item) => deleteTaskEvidenceFile(evidenceStorageKey(record.id, task.id, item.id)).catch(() => {})));
+  await Promise.all(removals);
 }
 
 function downloadEvidence(id) {
@@ -2669,6 +2980,7 @@ function deleteAsset(id) {
   const record = state.assets.find((asset) => asset.id === id);
   if (!record) return;
   if (!window.confirm(`Delete “${record.name}” and its evidence record from this browser? Download the evidence first if you need it.`)) return;
+  void removeRecordEvidenceFiles(record);
   state.assets = state.assets.filter((asset) => asset.id !== id);
   state.reportTabs.delete(id);
   saveAssets();
@@ -3004,7 +3316,16 @@ els.frameCount.addEventListener("change", updateCostHint);
 els.registerSearch.addEventListener("input", renderRegister);
 els.registerStatusFilter.addEventListener("change", renderRegister);
 
-els.report.addEventListener("change", (event) => {
+els.report.addEventListener("change", async (event) => {
+  const evidenceInput = event.target.closest("[data-evidence-input]");
+  if (evidenceInput) {
+    const record = currentRecord();
+    const task = record?.tasks.find((item) => item.id === evidenceInput.dataset.evidenceInput);
+    const files = [...(evidenceInput.files || [])];
+    evidenceInput.value = "";
+    if (record && task && files.length) await attachTaskEvidence(record, task, files);
+    return;
+  }
   const input = event.target.closest("[data-task]");
   const record = currentRecord();
   if (!input || !record) return;
@@ -3027,6 +3348,26 @@ els.report.addEventListener("click", (event) => {
   }
   const record = currentRecord();
   if (!record) return;
+
+  const evidenceAdd = event.target.closest("[data-evidence-add]");
+  if (evidenceAdd) {
+    $(`[data-evidence-input="${evidenceAdd.dataset.evidenceAdd}"]`, els.report)?.click();
+    return;
+  }
+
+  const evidenceDownload = event.target.closest("[data-evidence-download]");
+  if (evidenceDownload) {
+    const task = record.tasks.find((item) => item.id === evidenceDownload.dataset.evidenceTask);
+    if (task) void downloadTaskEvidence(record, task, evidenceDownload.dataset.evidenceDownload);
+    return;
+  }
+
+  const evidenceRemove = event.target.closest("[data-evidence-remove]");
+  if (evidenceRemove) {
+    const task = record.tasks.find((item) => item.id === evidenceRemove.dataset.evidenceTask);
+    if (task) void removeTaskEvidence(record, task, evidenceRemove.dataset.evidenceRemove);
+    return;
+  }
 
   const more = event.target.closest("[data-more]");
   if (more) {

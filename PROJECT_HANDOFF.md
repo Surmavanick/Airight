@@ -26,6 +26,8 @@ Airight currently includes:
 - optional server-side AI or Not credential failover for provider HTTP 401/402/403 only, with no automatic retry for 429, timeout, network, 5xx, or invalid input;
 - a full-width analysis composer with a populated desktop Evidence rail, spacious media/text inputs and a responsive mobile action flow;
 - a continuous one-page report with sticky **Repository / Human plan / Evidence** section navigation, no nested report scroller, compact score summary and de-duplicated actions;
+- modality-specific report layouts that use the full canvas for text, image, video and audio findings instead of leaving a narrow preview beside empty space;
+- optional per-task supporting-file attachments. Task completion remains self-attested and independent; attachment bytes stay in browser IndexedDB while JSON exports contain metadata and SHA-256 fingerprints only;
 - public GitHub repository import for Code: real tree/source-sample coverage, repository profile, created/pushed/latest-commit timeline, languages, public activity and top contributors, plus a stable repository-ID-seeded ChatGPT/Codex/other/Human demo mix. It is explicitly illustrative, not forensic model attribution;
 - a separate 51% Human contribution plan with concrete code lines/files/tests, text words, image edit categories, video shots or audio seconds. Completing the task never rewrites the original model signal.
 
@@ -107,6 +109,8 @@ Video is frame-level screening, not full temporal deepfake detection. Audio scre
 - Tracked API/import tests: **33/33 passed**, including primary/backup routing, fresh multipart bodies, no-retry failures, rate guards, secret redaction, GitHub URL/SSRF validation, shared import deadlines, secondary-limit handling, deterministic mixes and exact 51% line math.
 - Admin responsive/browser regression: **11/11 passed**.
 - Dedicated Code-import browser flow: **5/5 passed** at **1440×900, 1024×768, 390×844 and 320×700**, including reload, export, rescan, keyboard navigation, stable rerenders and no overflow.
+- Cross-modality report matrix: **20/20 passed** for Text, Image, Video, Audio and Code at **1440, 1024, 390 and 320 px** with no report/document overflow or browser errors.
+- Optional evidence lifecycle passed at 390 px: attach without task mutation, IndexedDB byte persistence, metadata-only localStorage/JSON, reload, byte-identical download and removal.
 - Real local end-to-end import of `Surmavanick/Airight` passed through GitHub's live REST API: 17 eligible files, 8 bounded samples, repository activity/contributor enrichment, stable 100% composition and no source-code persistence in the response.
 - Report workflow passed at **1440×900, 1280×800, 1024×768, 390×844 and 320×700**.
 - Tested: sticky section navigation and manual-scroll state, task rerenders/focus, Review completion/reopen, evidence download, second analysis, desktop Evidence fields, large media previews, mobile touch targets, no nested report scroll, no horizontal overflow, and no browser/page errors.
